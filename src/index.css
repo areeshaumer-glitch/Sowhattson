@@ -1,0 +1,491 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap');
+
+/* ─── CSS Variables / Design Tokens ──────────────────────── */
+:root {
+  /* Brand */
+  --primary: #66307B;
+  --primary-light: rgba(102, 48, 123, 0.12);
+  --primary-dark: #4e2460;
+  --secondary: #C89A4F;
+  --secondary-light: rgba(200, 154, 79, 0.15);
+  --gradient: linear-gradient(90deg, #66307B 0%, #C89A4F 100%);
+  --gradient-hover: linear-gradient(90deg, #4e2460 0%, #b08840 100%);
+  /* Dashboard stat hover (purple → gold, matches featured revenue tile) */
+  --stat-hover-gradient: linear-gradient(90deg, #632c7b 0%, #c0944b 100%);
+
+  /* Backgrounds */
+  --bg-page: #F2EEE3;
+  --bg-card: #ECE6D7;
+  --bg-card-hover: #E5DEC7;
+  /* Soft off-white for fields & nested rows — reads lighter than cards, not harsh #fff */
+  --bg-input: #F6F2E9;
+  --bg-sidebar: #150D1F;
+  /* Auth split left: lighter than sidebar, still a deep purple (not pastel) */
+  --bg-auth-brand: #9187a3;
+  --bg-topbar: #897e7e;
+
+  /* Text */
+  --text-primary: #1E1E1E;
+  --text-secondary: #4A4A4A;
+  --text-muted: #8D8D8D;
+  --text-placeholder: #ABABAB;
+  --text-inverse: #FFFFFF;
+
+  /* Border */
+  --border: #D9D9D9;
+  --border-strong: #BBBBBB;
+
+  /* State Colors */
+  --success: #3DD598;
+  --success-bg: rgba(61, 213, 152, 0.12);
+  --warning: #FF9F43;
+  --warning-bg: rgba(255, 159, 67, 0.12);
+  --danger: #EA5455;
+  --danger-bg: rgba(234, 84, 85, 0.12);
+  --info: #00CFE8;
+  --info-bg: rgba(0, 207, 232, 0.12);
+
+  /* Layout */
+  --sidebar-width: 220px;
+  --topbar-height: 64px;
+
+  /* Shadows */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.10);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
+  --shadow-primary: 0 4px 20px rgba(102, 48, 123, 0.30);
+
+  /* Radius */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  /* Transitions */
+  --transition: 0.2s ease;
+  --transition-slow: 0.3s ease;
+}
+
+/* ─── Reset ──────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { font-size: 16px; -webkit-font-smoothing: antialiased; }
+
+body {
+  font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-weight: 400;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+a { color: inherit; text-decoration: none; }
+button { font-family: inherit; cursor: pointer; border: none; background: none; }
+input, textarea, select { font-family: inherit; }
+img { max-width: 100%; display: block; }
+ul, ol { list-style: none; }
+
+/* ─── Scrollbar ──────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: var(--radius-full); }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ─── Utilities ──────────────────────────────────────────── */
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); border: 0;
+}
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flex { display: flex; }
+.flex-center { display: flex; align-items: center; justify-content: center; }
+.gap-sm { gap: 8px; }
+.gap-md { gap: 16px; }
+
+/* ─── Gradient text helper ───────────────────────────────── */
+.gradient-text {
+  background: var(--gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ─── Animation ──────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* Dashboard: stat cards — 3 per row on desktop */
+.dashboard-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+@media (max-width: 900px) {
+  .dashboard-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 520px) {
+  .dashboard-stat-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* List pages (mobile): search + status/filters stay on one row under the app header */
+.list-toolbar-filters-mobile {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.list-toolbar-filters-mobile > * {
+  flex-shrink: 0;
+}
+.list-toolbar-filters-mobile > *:first-child {
+  flex: 1 1 0;
+  min-width: 120px;
+  flex-shrink: 1;
+}
+
+/* Settings: sidebar sits beside the form card (cluster centered; card keeps margin auto) */
+.settings-body-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 520px) minmax(0, 1fr);
+  gap: 38px;
+  align-items: start;
+}
+.settings-body-grid-spacer {
+  min-height: 0;
+}
+@media (max-width: 900px) {
+  .settings-body-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .settings-body-grid-spacer {
+    display: none;
+  }
+}
+
+.stat-card-hit {
+  border-radius: var(--radius-lg);
+  outline: none;
+}
+.stat-card-hit:focus-visible {
+  box-shadow: 0 0 0 3px rgba(102, 48, 123, 0.35);
+}
+.stat-card-hit > .stat-card-surface {
+  transition:
+    transform 0.38s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.4s cubic-bezier(0.22, 1, 0.36, 1),
+    background 0.4s ease-out,
+    border-color 0.35s ease-out,
+    filter 0.5s ease-out;
+}
+
+.stat-card-gradient-fill {
+  transition: opacity 0.45s ease-out;
+  pointer-events: none;
+}
+
+/* Plain KPI tiles: gradient fades in on hover instead of snapping */
+.stat-card-gradient-fill--plain-hover {
+  opacity: 0;
+}
+.stat-card-hit > .stat-card-surface--hover-active:not(.stat-card-surface--gradient) .stat-card-gradient-fill--plain-hover {
+  opacity: 1;
+}
+
+/* Featured tile: looks like a plain card while another dashboard stat is “hovered” */
+.stat-card-surface--gradient.stat-card-surface--gradient-muted {
+  background: var(--bg-card) !important;
+  box-shadow: var(--shadow-sm) !important;
+  border: 1px solid rgba(0, 0, 0, 0.04) !important;
+  filter: none !important;
+}
+.stat-card-surface--gradient-muted .stat-card-gradient-fill {
+  opacity: 0;
+}
+
+/* Plain cards: lift + shadow; color comes from fading .stat-card-gradient-fill--plain-hover */
+.stat-card-hit > .stat-card-surface--hover-active:not(.stat-card-surface--gradient) {
+  transform: translateY(-3px);
+  border-color: transparent !important;
+  box-shadow: var(--shadow-primary), 0 14px 36px rgba(99, 44, 123, 0.38);
+}
+
+/* Featured gradient card: richer when it is the active hover */
+.stat-card-hit > .stat-card-surface--hover-active.stat-card-surface--gradient:not(.stat-card-surface--gradient-muted) {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-primary), 0 14px 40px rgba(99, 44, 123, 0.42);
+  filter: brightness(1.04);
+}
+
+.stat-card-hit:active > .stat-card-surface {
+  transform: translateY(-1px);
+}
+
+/* Stat cards: calm default type; hover emphasis is mostly the gradient */
+.stat-card-title {
+  font-size: 12.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0 0 8px;
+  font-weight: 500;
+  transition: font-weight 0.4s ease-out, color 0.4s ease-out;
+}
+.stat-card-surface:not(.stat-card-surface--gradient) .stat-card-title {
+  color: var(--text-muted);
+}
+.stat-card-surface--gradient:not(.stat-card-surface--gradient-muted) .stat-card-title {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.stat-card-value {
+  font-size: 26px;
+  line-height: 1.2;
+  margin: 0 0 10px;
+  font-weight: 600;
+  transition: font-weight 0.4s ease-out, color 0.4s ease-out;
+}
+.stat-card-surface:not(.stat-card-surface--gradient) .stat-card-value {
+  color: var(--text-primary);
+}
+.stat-card-surface--gradient:not(.stat-card-surface--gradient-muted) .stat-card-value {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+/* Featured tile muted: same label/body colors as non-gradient stat cards */
+.stat-card-surface--gradient.stat-card-surface--gradient-muted .stat-card-title {
+  color: var(--text-muted);
+}
+.stat-card-surface--gradient.stat-card-surface--gradient-muted .stat-card-value {
+  color: var(--text-primary);
+}
+
+.stat-card-trend-label {
+  font-weight: 500;
+  transition: color 0.4s ease-out, font-weight 0.4s ease-out;
+}
+
+.stat-card-icon {
+  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), background 0.4s ease-out, color 0.4s ease-out;
+}
+
+/* Active-hover tile: light text on purple–gold (plain cards) */
+.stat-card-hit > .stat-card-surface--hover-active:not(.stat-card-surface--gradient) .stat-card-title {
+  color: rgba(255, 255, 255, 0.88);
+  font-weight: 600;
+}
+.stat-card-hit > .stat-card-surface--hover-active:not(.stat-card-surface--gradient) .stat-card-value {
+  color: #fff;
+  font-weight: 700;
+}
+.stat-card-hit > .stat-card-surface--hover-active:not(.stat-card-surface--gradient) .stat-card-trend-label {
+  color: rgba(255, 255, 255, 0.95) !important;
+  font-weight: 600;
+}
+.stat-card-hit > .stat-card-surface--hover-active:not(.stat-card-surface--gradient) .stat-card-icon {
+  background: rgba(255, 255, 255, 0.22) !important;
+  color: #fff !important;
+  transform: scale(1.05);
+}
+
+/* Featured tile while hovered (not muted) */
+.stat-card-hit > .stat-card-surface--hover-active.stat-card-surface--gradient:not(.stat-card-surface--gradient-muted) .stat-card-title {
+  color: #fff;
+  font-weight: 600;
+}
+.stat-card-hit > .stat-card-surface--hover-active.stat-card-surface--gradient:not(.stat-card-surface--gradient-muted) .stat-card-value {
+  color: #fff;
+  font-weight: 700;
+}
+.stat-card-hit > .stat-card-surface--hover-active.stat-card-surface--gradient:not(.stat-card-surface--gradient-muted) .stat-card-trend-label {
+  color: rgba(255, 255, 255, 0.95) !important;
+  font-weight: 600;
+}
+.stat-card-hit > .stat-card-surface--hover-active.stat-card-surface--gradient:not(.stat-card-surface--gradient-muted) .stat-card-icon {
+  transform: scale(1.05);
+}
+
+/* Login / forgot-password: brand panel + form side by side */
+.auth-split-wrap {
+  position: fixed;
+  inset: 0;
+  height: 100dvh;
+  max-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  overflow: hidden;
+  box-sizing: border-box;
+  background: var(--bg-page);
+}
+.auth-split-card {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  max-width: 920px;
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  animation: fadeIn 0.5s ease;
+}
+.auth-split-brand {
+  flex: 1 1 38%;
+  min-width: 0;
+  max-width: 400px;
+  background: var(--bg-auth-brand);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 32px;
+}
+.auth-split-brand-inner {
+  width: 100%;
+  max-width: 280px;
+}
+.auth-split-brand-lines {
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.auth-split-brand-line {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.82);
+}
+.auth-split-brand-illustration {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  margin: 0;
+  display: block;
+}
+.auth-split-form {
+  flex: 1 1 58%;
+  min-width: 0;
+  background: var(--bg-card);
+  padding: 40px 36px;
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+@media (max-width: 768px) {
+  /* Document scroll: not a fixed viewport box, not inner overflow */
+  .auth-split-wrap {
+    position: relative;
+    inset: auto;
+    min-height: 100dvh;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 16px;
+    padding-bottom: 32px;
+  }
+  .auth-split-card {
+    flex-direction: column;
+    max-width: 440px;
+    max-height: none;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .auth-split-brand {
+    max-width: none;
+    padding: 24px 22px;
+    flex: 0 0 auto;
+  }
+  .auth-split-form {
+    border-left: none;
+    border-top: 1px solid var(--border);
+    padding: 28px 24px 32px;
+    flex: 1 1 auto;
+  }
+}
+
+/* Login: no page scrollbar (desktop) */
+html.auth-page-lock,
+html.auth-page-lock body {
+  height: 100%;
+  overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  /*
+   * Scroll only on <html>. overflow-y:auto on both html and body makes body a nested
+   * scrollport (inner “container” scroll). Body/#root stay visible and grow with content.
+   */
+  html.auth-page-lock,
+  html:has(.auth-split-wrap) {
+    height: auto;
+    min-height: 100dvh;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  html.auth-page-lock body,
+  html:has(.auth-split-wrap) body {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+  html.auth-page-lock #root,
+  html:has(.auth-split-wrap) #root {
+    min-height: 0;
+    height: auto;
+    overflow: visible;
+  }
+  html.auth-page-lock,
+  html:has(.auth-split-wrap) {
+    scrollbar-width: auto;
+  }
+  html.auth-page-lock::-webkit-scrollbar,
+  html:has(.auth-split-wrap)::-webkit-scrollbar {
+    width: revert;
+    height: revert;
+  }
+  html.auth-page-lock::-webkit-scrollbar-track,
+  html:has(.auth-split-wrap)::-webkit-scrollbar-track {
+    background: revert;
+  }
+  html.auth-page-lock::-webkit-scrollbar-thumb,
+  html:has(.auth-split-wrap)::-webkit-scrollbar-thumb {
+    background: revert;
+    border-radius: revert;
+  }
+  html.auth-page-lock::-webkit-scrollbar-thumb:hover,
+  html:has(.auth-split-wrap)::-webkit-scrollbar-thumb:hover {
+    background: revert;
+  }
+}
