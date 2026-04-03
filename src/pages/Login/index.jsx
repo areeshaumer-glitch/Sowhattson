@@ -1,63 +1,106 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Mail, Lock, ArrowRight } from 'lucide-react';
-// import { callApi, Method } from '../../network/NetworkManager';
-// import { api } from '../../network/Environment';
+import { callApi, Method } from '../../network/NetworkManager';
+import { api } from '../../network/Environment';
 import { useAuthStore } from '../../store/authStore';
-// import { getApiErrorMessage } from '../../utils/apiErrorMessage';
+import { getApiErrorMessage } from '../../utils/apiErrorMessage';
+import { notifyError } from '../../utils/notify';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { AuthBrandAside } from '../../components/auth/AuthBrandAside';
 
+const DEVICE_TOKEN_KEY = 'sowhatson-device-token';
+
+function getOrCreateDeviceToken() {
+  try {
+    let t = localStorage.getItem(DEVICE_TOKEN_KEY);
+    if (!t || !String(t).trim()) {
+      t =
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? `web-${crypto.randomUUID()}`
+          : `web-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+      localStorage.setItem(DEVICE_TOKEN_KEY, t);
+    }
+    return t;
+  } catch {
+    return `web-${Date.now()}`;
+  }
+}
+
+/** Map API user to a stable shape for the admin UI (API uses `_id`). */
+function normalizeAuthUser(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  return {
+    id: raw._id ?? raw.id ?? null,
+    email: raw.email ?? null,
+    phone: raw.phone ?? null,
+    role: raw.role ?? null,
+    provider: raw.provider ?? null,
+    isVerified: raw.isVerified,
+    isProfileCompleted: raw.isProfileCompleted,
+  };
+}
+
 export default function LoginPage() {
   const navigate = useNavigate();
-  const location = useLocation();
   const { login } = useAuthStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [info, setInfo] = useState('');
 
   useEffect(() => {
     document.documentElement.classList.add('auth-page-lock');
     return () => document.documentElement.classList.remove('auth-page-lock');
   }, []);
 
-  useEffect(() => {
-    if (location.state?.passwordReset) {
-      setInfo("You've completed the reset steps. Sign in below.");
-      navigate('/login', { replace: true, state: {} });
-    }
-  }, [location.state, navigate]);
-
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!email || !password) { setError('Please enter both email and password.'); return; }
-    setError('');
+    const id = email.trim();
+    if (!id && !password) {
+      notifyError('Please enter your email and password.');
+      return;
+    }
+    if (!id) {
+      notifyError('Please enter your email.');
+      return;
+    }
+    if (!password) {
+      notifyError('Please enter your password.');
+      return;
+    }
     setLoading(true);
 
-    // await callApi({
-    //   method: Method.POST,
-    //   endPoint: api.signin,
-    //   bodyParams: { identifier: email, password },
-    //   onSuccess(response) {
-    //     const user = response.user ?? response.data?.user;
-    //     const token = response.token ?? response.data?.token ?? response.accessToken ?? response.data?.accessToken;
-    //     const refreshToken = response.refreshToken ?? response.data?.refreshToken;
-    //     if (!token) { setError('Login failed. No token received.'); return; }
-    //     login(user, token, refreshToken);
-    //     navigate('/dashboard', { replace: true });
-    //   },
-    //   onError(err) {
-    //     setError(getApiErrorMessage(err));
-    //     setLoading(false);
-    //   },
-    // });
-
-    login({ email }, 'dev-mock-token', undefined);
-    navigate('/dashboard', { replace: true });
-    setLoading(false);
+    await callApi({
+      method: Method.POST,
+      endPoint: api.signin,
+      bodyParams: {
+        identifier: id,
+        password,
+        deviceToken: getOrCreateDeviceToken(),
+      },
+      onSuccess(response) {
+        const user = normalizeAuthUser(response.user ?? response.data?.user);
+        const token =
+          response.accessToken
+          ?? response.data?.accessToken
+          ?? response.token
+          ?? response.data?.token;
+        const refreshToken = response.refreshToken ?? response.data?.refreshToken ?? null;
+        if (!token) {
+          notifyError('Sign-in failed. No access token received.');
+          setLoading(false);
+          return;
+        }
+        login(user ?? { email: id }, token, refreshToken);
+        navigate('/dashboard', { replace: true });
+        setLoading(false);
+      },
+      onError(err) {
+        notifyError(getApiErrorMessage(err));
+        setLoading(false);
+      },
+    });
   };
 
   return (
@@ -77,7 +120,6 @@ export default function LoginPage() {
         <AuthBrandAside
           lines={[
             'Sign in with your administrator email and password. Manage experiences, providers, tickets, and settings from one place.',
-            
           ]}
         />
         <section className="auth-split-form">
@@ -93,7 +135,7 @@ export default function LoginPage() {
           </h1>
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
           <Input
-            label="Email Address"
+            label="Email"
             type="email"
             placeholder="admin@sowhatson.com"
             value={email}
@@ -123,31 +165,6 @@ export default function LoginPage() {
               Forgot password?
             </Link>
           </div>
-
-          {info && (
-            <div style={{
-              padding: '10px 14px',
-              borderRadius: 'var(--radius-md)',
-              background: 'var(--success-bg)',
-              border: '1px solid rgba(61,213,152,0.35)',
-              fontSize: 13, color: 'var(--success)', fontWeight: 500,
-            }}>
-              {info}
-            </div>
-          )}
-
-          {error && (
-            <div style={{
-              padding: '10px 14px',
-              borderRadius: 'var(--radius-md)',
-              background: 'var(--danger-bg)',
-              border: '1px solid rgba(234,84,85,0.25)',
-              fontSize: 13, color: 'var(--danger)', fontWeight: 500,
-              display: 'flex', alignItems: 'center', gap: 8,
-            }}>
-              <span>⚠</span> {error}
-            </div>
-          )}
 
           <Button
             type="submit"

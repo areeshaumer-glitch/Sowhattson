@@ -1,10 +1,21 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
+import { callApi, Method } from '../../network/NetworkManager';
+import { api } from '../../network/Environment';
+import { getApiErrorMessage } from '../../utils/apiErrorMessage';
+import { notifyError, notifySuccess } from '../../utils/notify';
 import { Button } from '../../components/ui/Button';
 import { AuthShell } from './AuthShell';
 
 const CELL_COUNT = 4;
+const RESEND_COOLDOWN_SEC = 60;
+
+function formatMmSs(totalSeconds) {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
 
 const cellBaseStyle = {
   width: '100%',
@@ -31,7 +42,9 @@ export default function ForgotPasswordOtpPage() {
   const email = location.state?.email;
 
   const [cells, setCells] = useState(() => Array(CELL_COUNT).fill(''));
-  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendCooldownSec, setResendCooldownSec] = useState(RESEND_COOLDOWN_SEC);
   const inputRefs = useRef([]);
 
   useEffect(() => {
@@ -39,6 +52,12 @@ export default function ForgotPasswordOtpPage() {
       navigate('/forgot-password', { replace: true });
     }
   }, [email, navigate]);
+
+  useEffect(() => {
+    if (resendCooldownSec <= 0) return undefined;
+    const t = setTimeout(() => setResendCooldownSec((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldownSec]);
 
   const otp = cells.join('');
 
@@ -51,8 +70,7 @@ export default function ForgotPasswordOtpPage() {
   };
 
   const handleChange = (index, e) => {
-    const raw = e.target.value.replace(/\s/g, '');
-    setError('');
+    const raw = e.target.value.replace(/\D/g, '');
     if (raw.length === 0) {
       setCharAt(index, '');
       return;
@@ -91,7 +109,7 @@ export default function ForgotPasswordOtpPage() {
 
   const handlePaste = (e) => {
     e.preventDefault();
-    const text = e.clipboardData.getData('text').replace(/\s/g, '').slice(0, CELL_COUNT);
+    const text = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, CELL_COUNT);
     if (!text) return;
     const chars = text.split('');
     setCells((prev) => {
@@ -101,7 +119,6 @@ export default function ForgotPasswordOtpPage() {
       }
       return next;
     });
-    setError('');
     const lastFilled = Math.min(chars.length, CELL_COUNT) - 1;
     const focusIdx = lastFilled >= 0 ? lastFilled : 0;
     requestAnimationFrame(() => {
@@ -109,17 +126,57 @@ export default function ForgotPasswordOtpPage() {
     });
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     const code = otp;
     if (code.length !== CELL_COUNT) {
-      setError('Please enter the full 4-character code.');
+      notifyError(`Please enter the full ${CELL_COUNT}-digit code.`);
       return;
     }
-    setError('');
-    navigate('/forgot-password/reset', {
-      replace: false,
-      state: { email, otp: code },
+    setLoading(true);
+    await callApi({
+      method: Method.POST,
+      endPoint: api.verifyForgotPassword,
+      bodyParams: { email, otp: code },
+      onSuccess(response) {
+        navigate('/forgot-password/reset', {
+          replace: false,
+          state: {
+            email,
+            otpVerified: true,
+            verifyMessage:
+              typeof response?.message === 'string' ? response.message : undefined,
+          },
+        });
+        setLoading(false);
+      },
+      onError(err) {
+        notifyError(getApiErrorMessage(err));
+        setLoading(false);
+      },
+    });
+  };
+
+  const handleResend = async () => {
+    if (!email || resendCooldownSec > 0 || resendLoading || loading) return;
+    setResendLoading(true);
+    await callApi({
+      method: Method.POST,
+      endPoint: api.forgotPasswordRequest,
+      bodyParams: { email },
+      onSuccess(response) {
+        const msg =
+          typeof response?.message === 'string' && response.message.trim()
+            ? response.message.trim()
+            : 'OTP sent to your email for password reset.';
+        notifySuccess(msg);
+        setResendCooldownSec(RESEND_COOLDOWN_SEC);
+        setResendLoading(false);
+      },
+      onError(err) {
+        notifyError(getApiErrorMessage(err));
+        setResendLoading(false);
+      },
     });
   };
 
@@ -155,7 +212,7 @@ export default function ForgotPasswordOtpPage() {
                   inputRefs.current[index] = el;
                 }}
                 type="text"
-                inputMode="text"
+                inputMode="numeric"
                 autoComplete={index === 0 ? 'one-time-code' : 'off'}
                 name={index === 0 ? 'otp' : undefined}
                 maxLength={CELL_COUNT}
@@ -179,37 +236,66 @@ export default function ForgotPasswordOtpPage() {
           </div>
         </div>
 
-        {error && (
-          <div style={{
-            padding: '10px 14px',
-            borderRadius: 'var(--radius-md)',
-            background: 'var(--danger-bg)',
-            border: '1px solid rgba(234,84,85,0.25)',
-            fontSize: 13, color: 'var(--danger)', fontWeight: 500,
-            display: 'flex', alignItems: 'center', gap: 8,
-          }}>
-            <span>⚠</span> {error}
-          </div>
-        )}
-
         <Button
           type="submit"
           variant="primary"
           size="lg"
           fullWidth
-          iconRight={<ArrowRight size={16} />}
+          loading={loading}
+          iconRight={!loading ? <ArrowRight size={16} /> : undefined}
         >
           Verify code
         </Button>
 
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, marginTop: 4 }}>
+          {resendCooldownSec > 0 ? (
+            <p
+              style={{
+                margin: 0,
+                fontSize: 18,
+                fontWeight: 700,
+                fontVariantNumeric: 'tabular-nums',
+                letterSpacing: '0.06em',
+                color: 'var(--text-primary)',
+                textAlign: 'center',
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+              }}
+              aria-label={`Resend code in ${formatMmSs(resendCooldownSec)}`}
+            >
+              {formatMmSs(resendCooldownSec)}
+            </p>
+          ) : null}
+          <button
+            type="button"
+            onClick={handleResend}
+            disabled={resendLoading || loading || resendCooldownSec > 0}
+            aria-disabled={resendLoading || loading || resendCooldownSec > 0}
+            style={{
+              fontSize: 13,
+              fontWeight: 600,
+              color:
+                resendLoading || loading || resendCooldownSec > 0
+                  ? 'var(--text-muted)'
+                  : 'var(--primary)',
+              background: 'none',
+              border: 'none',
+              cursor:
+                resendLoading || loading || resendCooldownSec > 0 ? 'not-allowed' : 'pointer',
+              padding: '4px 8px',
+              fontFamily: 'inherit',
+              pointerEvents:
+                resendLoading || loading || resendCooldownSec > 0 ? 'none' : 'auto',
+              userSelect: 'none',
+            }}
+          >
+            {resendLoading ? 'Sending…' : 'Resend code'}
+          </button>
           <Link
             to="/login"
             style={{ fontSize: 13, color: 'var(--primary)', fontWeight: 600, textDecoration: 'none' }}
           >
             Back to sign in
           </Link>
-         
         </div>
       </form>
     </AuthShell>

@@ -5,6 +5,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
+import { performLogout } from '../../network/NetworkManager';
 import { BrandWordmark } from '../brand/BrandWordmark';
 
 const ICON = 17;
@@ -27,11 +28,12 @@ const navItems = [
 
 export const Sidebar = ({ isOpen, onClose, isMobile }) => {
   const navigate = useNavigate();
-  const { logout, user } = useAuthStore();
+  const { user } = useAuthStore();
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await performLogout();
     navigate('/login');
+    onClose?.();
   };
 
   return (

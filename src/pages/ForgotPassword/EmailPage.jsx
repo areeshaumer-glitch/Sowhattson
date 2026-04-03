@@ -1,50 +1,51 @@
 import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Mail, ArrowRight } from 'lucide-react';
-// import { callApi, Method } from '../../network/NetworkManager';
-// import { api } from '../../network/Environment';
+import { callApi, Method } from '../../network/NetworkManager';
+import { api } from '../../network/Environment';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { AuthShell } from './AuthShell';
-// import { getApiErrorMessage } from '../../utils/apiErrorMessage';
+import { getApiErrorMessage } from '../../utils/apiErrorMessage';
+import { notifyError, notifySuccess } from '../../utils/notify';
 
 export default function ForgotPasswordEmailPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [email, setEmail] = useState(() => location.state?.email ?? '');
-  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!email.trim()) {
-      setError('Please enter your email address.');
+      notifyError('Please enter your email address.');
       return;
     }
-    setError('');
     setLoading(true);
 
-    // await callApi({
-    //   method: Method.POST,
-    //   endPoint: api.forgotPasswordRequest,
-    //   bodyParams: { identifier: email.trim(), email: email.trim() },
-    //   onSuccess() {
-    //     navigate('/forgot-password/otp', {
-    //       replace: false,
-    //       state: { email: email.trim() },
-    //     });
-    //   },
-    //   onError(err) {
-    //     setError(getApiErrorMessage(err));
-    //     setLoading(false);
-    //   },
-    // });
+    const trimmed = email.trim();
 
-    navigate('/forgot-password/otp', {
-      replace: false,
-      state: { email: email.trim() },
+    await callApi({
+      method: Method.POST,
+      endPoint: api.forgotPasswordRequest,
+      bodyParams: { email: trimmed },
+      onSuccess(response) {
+        const msg =
+          typeof response?.message === 'string' && response.message.trim()
+            ? response.message.trim()
+            : 'We sent a verification code to your email.';
+        notifySuccess(msg);
+        navigate('/forgot-password/otp', {
+          replace: false,
+          state: { email: trimmed },
+        });
+        setLoading(false);
+      },
+      onError(err) {
+        notifyError(getApiErrorMessage(err));
+        setLoading(false);
+      },
     });
-    setLoading(false);
   };
 
   return (
@@ -62,19 +63,6 @@ export default function ForgotPasswordEmailPage() {
           icon={<Mail size={15} />}
           autoComplete="email"
         />
-
-        {error && (
-          <div style={{
-            padding: '10px 14px',
-            borderRadius: 'var(--radius-md)',
-            background: 'var(--danger-bg)',
-            border: '1px solid rgba(234,84,85,0.25)',
-            fontSize: 13, color: 'var(--danger)', fontWeight: 500,
-            display: 'flex', alignItems: 'center', gap: 8,
-          }}>
-            <span>⚠</span> {error}
-          </div>
-        )}
 
         <Button
           type="submit"

@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Plus, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
 import { callApi, Method } from '../../network/NetworkManager';
 import { api } from '../../network/Environment';
+import { getApiErrorMessage } from '../../utils/apiErrorMessage';
+import { notifyError, notifySuccess } from '../../utils/notify';
 import { ListPageToolbar } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { SearchBar } from '../../components/ui/SearchBar';
@@ -13,27 +15,70 @@ import { Select } from '../../components/ui/Select';
 import { Pagination } from '../../components/ui/Pagination';
 import { useDebounce } from '../../hooks/useDebounce';
 
-const MOCK_COUPONS = [
-  { id: '1', name: 'Early bird', totalQuantity: 500, discountType: 'percentage', discountValue: 15, isActive: true, createdAt: '2026-01-12' },
-  { id: '2', name: 'Weekend special', totalQuantity: 200, discountType: 'fixed', discountValue: 2500, isActive: true, createdAt: '2026-01-10' },
-  { id: '3', name: 'VIP launch', totalQuantity: 50, discountType: 'percentage', discountValue: 25, isActive: false, createdAt: '2026-01-08' },
-  { id: '4', name: 'Student pass', totalQuantity: 1000, discountType: 'percentage', discountValue: 10, isActive: true, createdAt: '2026-01-05' },
-  { id: '5', name: 'Flat ₦5k off', totalQuantity: 80, discountType: 'fixed', discountValue: 5000, isActive: true, createdAt: '2026-01-02' },
-  { id: '6', name: 'New year', totalQuantity: 0, discountType: 'percentage', discountValue: 20, isActive: false, createdAt: '2025-12-28' },
-];
-
-const defaultForm = {
-  name: '',
-  totalQuantity: '',
-  discountType: 'percentage',
-  discountValue: '',
-  isActive: true,
-};
+const LIMIT = 8;
 
 const DISCOUNT_TYPE_OPTIONS = [
+  { label: 'Free', value: 'free' },
   { label: 'Percentage', value: 'percentage' },
-  { label: 'Fixed value (₦)', value: 'fixed' },
+  { label: 'Fixed amount (₦)', value: 'fixed' },
 ];
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+function toDatetimeLocalValue(d) {
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function datetimeLocalToIso(localStr) {
+  if (!localStr) return '';
+  const d = new Date(localStr);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toISOString();
+}
+
+function defaultFormDates() {
+  const start = new Date();
+  const end = new Date();
+  end.setDate(end.getDate() + 30);
+  return {
+    startsAt: toDatetimeLocalValue(start),
+    expiresAt: toDatetimeLocalValue(end),
+  };
+}
+
+const defaultForm = () => ({
+  code: '',
+  description: '',
+  eventId: '',
+  discountType: 'free',
+  value: '',
+  maxUses: '',
+  isActive: true,
+  ...defaultFormDates(),
+});
+
+function normalizeCouponFromApi(c) {
+  if (!c || typeof c !== 'object') return null;
+  const ev = c.event;
+  return {
+    id: String(c._id ?? c.id ?? ''),
+    code: c.code ?? '',
+    description: c.description ?? '',
+    eventId: String(ev?._id ?? ev?.id ?? c.eventId ?? ''),
+    eventName: ev?.name ?? '',
+    discountType: c.discountType ?? 'percentage',
+    value: Number(c.value) || 0,
+    maxUses: Number(c.maxUses) || 0,
+    redeemedCount: Number(c.redeemedCount) || 0,
+    startsAt: c.startsAt,
+    expiresAt: c.expiresAt,
+    isActive: Boolean(c.isActive),
+    createdAt: c.createdAt,
+  };
+}
 
 const ab = (bg, color) => ({
   width: 28,
@@ -48,19 +93,10 @@ const ab = (bg, color) => ({
   color,
 });
 
-function formatDiscount(row) {
-  const t = row?.discountType === 'fixed' ? 'fixed' : 'percentage';
-  const v = Number(row?.discountValue);
-  if (Number.isNaN(v)) return '—';
-  if (t === 'fixed') return `₦${v.toLocaleString()}`;
-  return `${v}%`;
-}
-
 export default function CouponsPage() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
-  const [coupons, setCoupons] = useState([]);
-  const [total, setTotal] = useState(0);
+  const [allCoupons, setAllCoupons] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showModal, setShowModal] = useState(false);
@@ -68,101 +104,182 @@ export default function CouponsPage() {
   const [formErrors, setFormErrors] = useState({});
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [eventOptions, setEventOptions] = useState([]);
   const debouncedSearch = useDebounce(search, 350);
-  const LIMIT = 8;
+
+  const fetchEventsForSelect = useCallback(() => {
+    callApi({
+      method: Method.GET,
+      endPoint: api.getAdminEvents(1, 100, '', ''),
+      onSuccess(response) {
+        const list = response.data ?? response.events ?? [];
+        setEventOptions(
+          Array.isArray(list)
+            ? list.map((e) => ({
+                value: String(e._id ?? e.id ?? ''),
+                label: e.title ?? e.name ?? 'Event',
+              })).filter((o) => o.value)
+            : [],
+        );
+      },
+      onError() {
+        setEventOptions([]);
+      },
+    });
+  }, []);
 
   const fetchCoupons = useCallback(() => {
     setLoading(true);
     callApi({
       method: Method.GET,
-      endPoint: api.getAdminCoupons(page, LIMIT, debouncedSearch),
+      endPoint: api.getAdminCoupons(),
       onSuccess(response) {
-        const rows = response.data ?? response.coupons ?? [];
-        setCoupons(Array.isArray(rows) ? rows.map(normalizeCouponRow) : []);
-        setTotal(response.total ?? rows.length ?? 0);
+        const rows = response.coupons ?? response.data ?? [];
+        const normalized = Array.isArray(rows)
+          ? rows.map(normalizeCouponFromApi).filter(Boolean)
+          : [];
+        setAllCoupons(normalized);
         setLoading(false);
       },
-      onError() {
-        const filtered = MOCK_COUPONS.filter((c) =>
-          c.name.toLowerCase().includes(debouncedSearch.toLowerCase()),
-        );
-        setCoupons(filtered.slice((page - 1) * LIMIT, page * LIMIT));
-        setTotal(filtered.length);
+      onError(err) {
+        setAllCoupons([]);
+        notifyError(getApiErrorMessage(err));
         setLoading(false);
       },
     });
-  }, [page, debouncedSearch]);
+  }, []);
 
-  useEffect(() => { fetchCoupons(); }, [fetchCoupons]);
-  useEffect(() => { setPage(1); }, [debouncedSearch]);
+  useEffect(() => {
+    fetchEventsForSelect();
+  }, [fetchEventsForSelect]);
+
+  useEffect(() => {
+    fetchCoupons();
+  }, [fetchCoupons]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch]);
+
+  const filteredCoupons = useMemo(() => {
+    const q = debouncedSearch.trim().toLowerCase();
+    if (!q) return allCoupons;
+    return allCoupons.filter((c) => {
+      const blob = [c.code, c.description].filter(Boolean).join(' ').toLowerCase();
+      return blob.includes(q);
+    });
+  }, [allCoupons, debouncedSearch]);
+
+  const total = filteredCoupons.length;
+  const coupons = useMemo(() => {
+    const start = (page - 1) * LIMIT;
+    return filteredCoupons.slice(start, start + LIMIT);
+  }, [filteredCoupons, page]);
 
   const openCreate = () => {
-    setForm(defaultForm);
+    setForm(defaultForm());
     setFormErrors({});
     setShowModal(true);
   };
 
   const validate = () => {
     const errors = {};
-    if (!form.name.trim()) errors.name = 'Coupon name is required.';
-    else if (form.name.trim().length < 2) errors.name = 'Name must be at least 2 characters.';
-    else if (form.name.trim().length > 80) errors.name = 'Name must be under 80 characters.';
+    const code = form.code.trim().toUpperCase();
+    if (!code) errors.code = 'Coupon code is required.';
+    else if (code.length < 2) errors.code = 'Code must be at least 2 characters.';
+    else if (code.length > 40) errors.code = 'Code must be under 40 characters.';
 
-    const qty = parseInt(String(form.totalQuantity).trim(), 10);
-    if (form.totalQuantity === '' || Number.isNaN(qty)) errors.totalQuantity = 'Enter a valid number.';
-    else if (qty < 0) errors.totalQuantity = 'Cannot be negative.';
+    if (!form.description.trim()) errors.description = 'Description is required.';
+    else if (form.description.trim().length > 500) errors.description = 'Description is too long.';
 
-    const val = parseFloat(String(form.discountValue).trim());
-    if (form.discountValue === '' || Number.isNaN(val)) errors.discountValue = 'Enter a valid value.';
-    else if (form.discountType === 'percentage' && (val < 0 || val > 100)) {
-      errors.discountValue = 'Percentage must be between 0 and 100.';
+    if (!form.eventId) errors.eventId = 'Select an experience.';
+
+    const maxUses = parseInt(String(form.maxUses).trim(), 10);
+    if (form.maxUses === '' || Number.isNaN(maxUses)) errors.maxUses = 'Enter a valid max uses count.';
+    else if (maxUses < 0) errors.maxUses = 'Cannot be negative.';
+
+    const valStr = String(form.value).trim();
+    const val = parseFloat(valStr);
+    if (form.discountType === 'free') {
+      if (valStr !== '' && (Number.isNaN(val) || val < 0)) {
+        errors.value = 'Enter a valid number (≥ 0) or leave empty for 0.';
+      }
+    } else if (valStr === '' || Number.isNaN(val)) {
+      errors.value = 'Enter a valid value.';
+    } else if (form.discountType === 'percentage' && (val < 0 || val > 100)) {
+      errors.value = 'Percentage must be between 0 and 100.';
     } else if (form.discountType === 'fixed' && val < 0) {
-      errors.discountValue = 'Amount cannot be negative.';
+      errors.value = 'Amount cannot be negative.';
+    }
+
+    if (!form.startsAt) errors.startsAt = 'Start date is required.';
+    if (!form.expiresAt) errors.expiresAt = 'End date is required.';
+    if (form.startsAt && form.expiresAt) {
+      const a = new Date(form.startsAt).getTime();
+      const b = new Date(form.expiresAt).getTime();
+      if (!Number.isNaN(a) && !Number.isNaN(b) && b <= a) {
+        errors.expiresAt = 'End must be after start.';
+      }
     }
 
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
 
-  const applyCreate = () => {
-    const qty = parseInt(String(form.totalQuantity).trim(), 10);
-    const val = parseFloat(String(form.discountValue).trim());
-    const newRow = {
-      id: String(Date.now()),
-      name: form.name.trim(),
-      totalQuantity: qty,
+  const buildBody = () => {
+    const maxUses = parseInt(String(form.maxUses).trim(), 10);
+    const rawVal = String(form.value).trim();
+    const valueNum =
+      rawVal === ''
+        ? 0
+        : parseFloat(rawVal);
+    return {
+      code: form.code.trim().toUpperCase(),
+      description: form.description.trim(),
+      eventId: form.eventId,
       discountType: form.discountType,
-      discountValue: val,
-      isActive: form.isActive,
-      createdAt: new Date().toISOString().split('T')[0],
+      value: Number.isNaN(valueNum) ? 0 : valueNum,
+      maxUses,
+      startsAt: datetimeLocalToIso(form.startsAt),
+      expiresAt: datetimeLocalToIso(form.expiresAt),
+      isActive: Boolean(form.isActive),
     };
-    setCoupons((prev) => [normalizeCouponRow(newRow), ...prev]);
-    setTotal((t) => t + 1);
+  };
+
+  const mergeCouponResponse = (coupon) => {
+    const n = normalizeCouponFromApi(coupon);
+    if (!n) return;
+    setAllCoupons((prev) => {
+      const idx = prev.findIndex((c) => c.id === n.id);
+      if (idx === -1) return [n, ...prev];
+      const next = [...prev];
+      next[idx] = n;
+      return next;
+    });
   };
 
   const handleSave = () => {
     if (!validate()) return;
     setSaving(true);
-    const qty = parseInt(String(form.totalQuantity).trim(), 10);
-    const val = parseFloat(String(form.discountValue).trim());
+    const body = buildBody();
+
     callApi({
       method: Method.POST,
       endPoint: api.createAdminCoupon,
-      bodyParams: {
-        name: form.name.trim(),
-        totalQuantity: qty,
-        discountType: form.discountType,
-        discountValue: val,
-        isActive: form.isActive,
-      },
-      onSuccess() {
-        applyCreate();
+      bodyParams: body,
+      onSuccess(response) {
+        const c = response.coupon ?? response;
+        mergeCouponResponse(c);
+        const msg =
+          typeof response?.message === 'string' && response.message.trim()
+            ? response.message.trim()
+            : 'Coupon created.';
+        notifySuccess(msg);
         setShowModal(false);
         setSaving(false);
       },
-      onError() {
-        applyCreate();
-        setShowModal(false);
+      onError(err) {
+        notifyError(getApiErrorMessage(err));
         setSaving(false);
       },
     });
@@ -176,14 +293,13 @@ export default function CouponsPage() {
       method: Method.DELETE,
       endPoint: api.deleteAdminCoupon(id),
       onSuccess() {
-        setCoupons((prev) => prev.filter((c) => c.id !== id));
-        setTotal((t) => Math.max(0, t - 1));
+        setAllCoupons((prev) => prev.filter((c) => c.id !== id));
         setDeleteTarget(null);
         setDeleteLoading(false);
+        notifySuccess('Coupon deleted.');
       },
-      onError() {
-        setCoupons((prev) => prev.filter((c) => c.id !== id));
-        setTotal((t) => Math.max(0, t - 1));
+      onError(err) {
+        notifyError(getApiErrorMessage(err));
         setDeleteTarget(null);
         setDeleteLoading(false);
       },
@@ -192,39 +308,41 @@ export default function CouponsPage() {
 
   const columns = [
     {
-      key: 'name',
+      key: 'code',
       label: 'Coupon Name',
-      render: (v) => <span style={{ fontWeight: 500, fontSize: 13.5 }}>{v}</span>,
-    },
-    {
-      key: 'totalQuantity',
-      label: 'No. of Coupons',
-      align: 'center',
-      render: (v) => <span style={{ fontSize: 13, fontWeight: 500 }}>{v ?? 0}</span>,
-    },
-    {
-      key: 'discountValue',
-      label: 'Percentage / Value',
-      render: (_, row) => (
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--primary)' }}>{formatDiscount(row)}</span>
+      width: '42%',
+      render: (value) => (
+        <span style={{ fontWeight: 500, fontSize: 13.5 }}>
+          {(value || '').trim() || '—'}
+        </span>
       ),
     },
     {
       key: 'isActive',
       label: 'Status',
       align: 'center',
-      render: (v) => <Badge color={v ? 'success' : 'neutral'} dot>{v ? 'Active' : 'Inactive'}</Badge>,
+      width: '16%',
+      render: (v) => (
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
+          <Badge color={v ? 'success' : 'neutral'} dot>
+            {v ? 'Active' : 'Inactive'}
+          </Badge>
+        </div>
+      ),
     },
     {
       key: 'actions',
       label: 'Action',
-      align: 'center',
-      width: '72px',
+      align: 'right',
+      width: '42%',
       render: (_, row) => (
-        <div style={{ display: 'flex', justifyContent: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); setDeleteTarget(row); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setDeleteTarget(row);
+            }}
             title="Delete coupon"
             aria-label="Delete coupon"
             style={ab('rgba(234,84,85,0.12)', 'var(--danger)')}
@@ -254,37 +372,73 @@ export default function CouponsPage() {
         />
       </ListPageToolbar>
 
-      <DataTable columns={columns} data={coupons} isLoading={loading} emptyMessage="No coupons found." rowKey="id" />
-      <Pagination page={page} totalPages={Math.ceil(total / LIMIT)} total={total} limit={LIMIT} onPageChange={setPage} />
+      <DataTable
+        columns={columns}
+        data={coupons}
+        isLoading={loading}
+        emptyMessage="No coupons found."
+        rowKey="id"
+        fixedLayout
+      />
+      <Pagination page={page} totalPages={Math.max(1, Math.ceil(total / LIMIT))} total={total} limit={LIMIT} onPageChange={setPage} />
 
       <Modal
         isOpen={showModal}
-        onClose={() => setShowModal(false)}
-        title="Create New Coupon"
-        size="sm"
+        onClose={() => {
+          if (!saving) setShowModal(false);
+        }}
+        title="Create coupon"
+        size="md"
         footer={
           <>
-            <Button variant="ghost" onClick={() => setShowModal(false)} disabled={saving}>Cancel</Button>
-            <Button variant="primary" onClick={handleSave} loading={saving}>Create Coupon</Button>
+            <Button variant="ghost" onClick={() => setShowModal(false)} disabled={saving}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={handleSave} loading={saving}>
+              Create coupon
+            </Button>
           </>
         }
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <Input
-            label="Coupon Name *"
-            placeholder="e.g. Early bird"
-            value={form.name}
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            error={formErrors.name}
+            label="Code *"
+            placeholder="e.g. SUMMER20"
+            value={form.code}
+            onChange={(e) => setForm((f) => ({ ...f, code: e.target.value }))}
+            error={formErrors.code}
           />
-          <Input
-            label="No. of Coupons *"
-            type="number"
-            min={0}
-            placeholder="e.g. 500"
-            value={form.totalQuantity}
-            onChange={(e) => setForm((f) => ({ ...f, totalQuantity: e.target.value }))}
-            error={formErrors.totalQuantity}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>Description *</label>
+            <textarea
+              value={form.description}
+              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+              placeholder="Summer sale discount"
+              rows={3}
+              style={{
+                width: '100%',
+                padding: '12px 14px',
+                borderRadius: 'var(--radius-md)',
+                border: `1.5px solid ${formErrors.description ? 'var(--danger)' : 'var(--border)'}`,
+                background: 'var(--bg-input)',
+                color: 'var(--text-primary)',
+                fontSize: 14,
+                fontFamily: 'inherit',
+                resize: 'vertical',
+                minHeight: 72,
+                outline: 'none',
+              }}
+            />
+            {formErrors.description ? (
+              <p style={{ fontSize: 11.5, color: 'var(--danger)', fontWeight: 500 }}>{formErrors.description}</p>
+            ) : null}
+          </div>
+          <Select
+            label="Event * (eventId)"
+            value={form.eventId}
+            onChange={(v) => setForm((f) => ({ ...f, eventId: v }))}
+            options={[{ label: 'Select experience…', value: '' }, ...eventOptions]}
+            error={formErrors.eventId}
           />
           <Select
             label="Discount type *"
@@ -293,19 +447,58 @@ export default function CouponsPage() {
             options={DISCOUNT_TYPE_OPTIONS}
           />
           <Input
-            label={form.discountType === 'percentage' ? 'Percentage *' : 'Value (₦) *'}
+            label={
+              form.discountType === 'percentage'
+                ? 'Value * (%)'
+                : form.discountType === 'fixed'
+                  ? 'Value * (₦)'
+                  : 'Value *'
+            }
             type="number"
             min={0}
             max={form.discountType === 'percentage' ? 100 : undefined}
-            step={form.discountType === 'percentage' ? 1 : 1}
-            placeholder={form.discountType === 'percentage' ? 'e.g. 15' : 'e.g. 5000'}
-            value={form.discountValue}
-            onChange={(e) => setForm((f) => ({ ...f, discountValue: e.target.value }))}
-            error={formErrors.discountValue}
-            hint={form.discountType === 'percentage' ? 'Enter a value from 0 to 100.' : 'Fixed amount in Naira.'}
+            step={1}
+            placeholder={
+              form.discountType === 'free'
+                ? 'e.g. 20 (optional; 0 if empty)'
+                : form.discountType === 'percentage'
+                  ? 'e.g. 20'
+                  : 'e.g. 5000'
+            }
+            value={form.value}
+            onChange={(e) => setForm((f) => ({ ...f, value: e.target.value }))}
+            error={formErrors.value}
+            hint={
+              form.discountType === 'free'
+                ? 'Sent as numeric value in the request body (matches API schema).'
+                : undefined
+            }
+          />
+          <Input
+            label="Max uses *"
+            type="number"
+            min={0}
+            placeholder="e.g. 100"
+            value={form.maxUses}
+            onChange={(e) => setForm((f) => ({ ...f, maxUses: e.target.value }))}
+            error={formErrors.maxUses}
+          />
+          <Input
+            label="Starts at * (startsAt)"
+            type="datetime-local"
+            value={form.startsAt}
+            onChange={(e) => setForm((f) => ({ ...f, startsAt: e.target.value }))}
+            error={formErrors.startsAt}
+          />
+          <Input
+            label="Expires at * (expiresAt)"
+            type="datetime-local"
+            value={form.expiresAt}
+            onChange={(e) => setForm((f) => ({ ...f, expiresAt: e.target.value }))}
+            error={formErrors.expiresAt}
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>Status</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>Is active (isActive)</span>
             <button
               type="button"
               onClick={() => setForm((f) => ({ ...f, isActive: !f.isActive }))}
@@ -334,7 +527,9 @@ export default function CouponsPage() {
 
       <ConfirmModal
         isOpen={!!deleteTarget}
-        onClose={() => { if (!deleteLoading) setDeleteTarget(null); }}
+        onClose={() => {
+          if (!deleteLoading) setDeleteTarget(null);
+        }}
         onConfirm={handleConfirmDelete}
         loading={deleteLoading}
         title="Delete coupon"
@@ -342,23 +537,10 @@ export default function CouponsPage() {
         variant="danger"
         message={
           deleteTarget
-            ? `Delete "${deleteTarget.name}"? This cannot be undone.`
+            ? `Delete coupon "${(deleteTarget.code || '').trim() || 'this coupon'}"? This cannot be undone.`
             : ''
         }
       />
     </div>
   );
-}
-
-function normalizeCouponRow(row) {
-  if (!row || typeof row !== 'object') return row;
-  return {
-    id: String(row.id ?? ''),
-    name: row.name ?? '',
-    totalQuantity: row.totalQuantity ?? row.quantity ?? row.count ?? 0,
-    discountType: row.discountType === 'fixed' || row.type === 'fixed' ? 'fixed' : 'percentage',
-    discountValue: Number(row.discountValue ?? row.value ?? row.percent ?? 0),
-    isActive: row.isActive !== false && row.status !== 'inactive',
-    createdAt: row.createdAt,
-  };
 }

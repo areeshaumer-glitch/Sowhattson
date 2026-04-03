@@ -1,6 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Lock, ArrowRight } from 'lucide-react';
+import { callApi, Method } from '../../network/NetworkManager';
+import { api } from '../../network/Environment';
+import { getApiErrorMessage } from '../../utils/apiErrorMessage';
+import { notifyError, notifySuccess } from '../../utils/notify';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { AuthShell } from './AuthShell';
@@ -8,40 +12,64 @@ import { AuthShell } from './AuthShell';
 export default function ForgotPasswordResetPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { email, otp } = location.state ?? {};
+  const { email, otpVerified, verifyMessage } = location.state ?? {};
 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const verifyToastShown = useRef(false);
 
   useEffect(() => {
-    if (!email || !otp) {
+    if (!email || !otpVerified) {
       navigate('/forgot-password', { replace: true });
     }
-  }, [email, otp, navigate]);
+  }, [email, otpVerified, navigate]);
 
-  const handleSubmit = (e) => {
+  useEffect(() => {
+    const msg =
+      typeof verifyMessage === 'string' && verifyMessage.trim() ? verifyMessage.trim() : '';
+    if (msg && !verifyToastShown.current) {
+      verifyToastShown.current = true;
+      notifySuccess(msg);
+    }
+  }, [verifyMessage]);
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!password) {
-      setError('Please enter a new password.');
+      notifyError('Please enter a new password.');
       return;
     }
     if (password.length < 8) {
-      setError('Password must be at least 8 characters.');
+      notifyError('Password must be at least 8 characters.');
       return;
     }
     if (password !== confirmPassword) {
-      setError('Passwords do not match.');
+      notifyError('Passwords do not match.');
       return;
     }
-    setError('');
-    navigate('/login', {
-      replace: true,
-      state: { passwordReset: true },
+    setLoading(true);
+    await callApi({
+      method: Method.POST,
+      endPoint: api.forgotPasswordReset,
+      bodyParams: { email, newPassword: password },
+      onSuccess(response) {
+        const msg =
+          typeof response?.message === 'string' && response.message.trim()
+            ? response.message.trim()
+            : 'Password updated. Sign in with your new password.';
+        notifySuccess(msg);
+        navigate('/login', { replace: true });
+        setLoading(false);
+      },
+      onError(err) {
+        notifyError(getApiErrorMessage(err));
+        setLoading(false);
+      },
     });
   };
 
-  if (!email || !otp) return null;
+  if (!email || !otpVerified) return null;
 
   return (
     <AuthShell
@@ -68,25 +96,13 @@ export default function ForgotPasswordResetPage() {
           autoComplete="new-password"
         />
 
-        {error && (
-          <div style={{
-            padding: '10px 14px',
-            borderRadius: 'var(--radius-md)',
-            background: 'var(--danger-bg)',
-            border: '1px solid rgba(234,84,85,0.25)',
-            fontSize: 13, color: 'var(--danger)', fontWeight: 500,
-            display: 'flex', alignItems: 'center', gap: 8,
-          }}>
-            <span>⚠</span> {error}
-          </div>
-        )}
-
         <Button
           type="submit"
           variant="primary"
           size="lg"
           fullWidth
-          iconRight={<ArrowRight size={16} />}
+          loading={loading}
+          iconRight={!loading ? <ArrowRight size={16} /> : undefined}
         >
           Update password
         </Button>

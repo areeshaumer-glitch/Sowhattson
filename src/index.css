@@ -495,3 +495,87 @@ html.auth-page-lock body {
     background: revert;
   }
 }
+
+/*
+ * Sonner: toasts are position:absolute, so the toaster must have an explicit width.
+ * width:fit-content on the toaster collapses (~0px) and forces one character per line.
+ */
+[data-sonner-toaster] {
+  z-index: 10000;
+  --width: min(420px, calc(100vw - 24px)) !important;
+  width: var(--width) !important;
+  max-width: min(420px, calc(100vw - 24px)) !important;
+}
+
+/*
+ * Toast width follows message length (capped). Toaster keeps a max width so the
+ * stack doesn’t collapse (absolute children don’t size the toaster).
+ */
+[data-sonner-toaster] [data-sonner-toast][data-styled='true'] {
+  width: fit-content !important;
+  max-width: min(420px, calc(100vw - 24px)) !important;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+/* Don’t stretch the text block across the full toast — that created a gap before the × */
+[data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-content] {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* Match app success / error tokens so toasts read clearly vs page background */
+[data-sonner-toaster][data-sonner-theme='light'] {
+  --success-bg: var(--success-bg);
+  --success-border: rgba(61, 213, 152, 0.45);
+  --success-text: #0d5c3f;
+
+  --error-bg: var(--danger-bg);
+  --error-border: rgba(234, 84, 85, 0.4);
+  --error-text: #9e1f20;
+}
+
+/* LTR: close control on the top-right of the bar (not overlapping the message on the left) */
+[data-sonner-toaster][dir='ltr'] [data-sonner-toast][data-styled='true'] [data-close-button],
+[data-sonner-toaster]:not([dir='rtl']) [data-sonner-toast][data-styled='true'] [data-close-button] {
+  left: auto !important;
+  right: 10px !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+}
+
+[data-sonner-toaster][dir='rtl'] [data-sonner-toast][data-styled='true'] [data-close-button] {
+  right: auto !important;
+  left: 10px !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+}
+
+/* Room for the 20px close + 10px inset — keep tight to the last word */
+[data-sonner-toaster] [data-sonner-toast][data-styled='true']:has([data-close-button]) {
+  padding-right: 34px;
+}
+
+[data-sonner-toaster][dir='rtl'] [data-sonner-toast][data-styled='true']:has([data-close-button]) {
+  padding-right: 16px;
+  padding-left: 34px;
+}
+
+@media (max-width: 600px) {
+  [data-sonner-toaster] {
+    width: 100% !important;
+    max-width: none !important;
+    left: var(--mobile-offset-left, 16px) !important;
+    right: var(--mobile-offset-right, 16px) !important;
+  }
+
+  [data-sonner-toaster] [data-sonner-toast][data-styled='true'] {
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  [data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-content] {
+    max-width: none;
+    flex: 1 1 auto;
+  }
+}

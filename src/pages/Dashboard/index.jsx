@@ -6,49 +6,78 @@ import {
 import { DollarSign, Ticket, Users } from 'lucide-react';
 import { callApi, Method } from '../../network/NetworkManager';
 import { api } from '../../network/Environment';
+import { getApiErrorMessage } from '../../utils/apiErrorMessage';
+import { notifyError } from '../../utils/notify';
 import { StatCard } from '../../components/ui/StatCard';
 import { Card } from '../../components/ui/Card';
 import { DateRangeFilter } from '../../components/ui/DateRangeFilter';
 import { StatusBadge } from '../../components/ui/Badge';
 import { PageHeader } from '../../components/ui/PageHeader';
 
-const generateChart = (period) => {
-  const labels = {
-    weekly:  ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'],
-    monthly: ['W1','W2','W3','W4'],
-    yearly:  ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
-  };
-  const dates = labels[period] ?? labels.weekly;
-  return dates.map((date) => ({
-    date,
-    revenue: Math.round(Math.random() * 8000 + 1000),
-    tickets: Math.round(Math.random() * 200 + 20),
-    explorers: Math.round(Math.random() * 60 + 5),
-  }));
-};
+/** DateRangeFilter values → GET /admin/dashboard/stats ?period= */
+const PERIOD_UI_TO_API = { weekly: 'week', monthly: 'month', yearly: 'year' };
 
-const mockStats = (period) => {
-  const chart = generateChart(period);
+function toApiPeriod(uiPeriod) {
+  return PERIOD_UI_TO_API[uiPeriod] ?? 'week';
+}
+
+function emptyDashboard() {
   return {
-    revenue:   { total: 124500, change: 12.5, chart: chart.map(d => ({ date: d.date, value: d.revenue })) },
-    events:    { total: 342,    change: 8.2,  chart: chart.map(d => ({ date: d.date, value: Math.round(Math.random()*15+2) })) },
-    tickets:   { total: 8740,   change: 23.1, chart: chart.map(d => ({ date: d.date, value: d.tickets })) },
-    providers: { total: 89,     change: 5.3,  active: 74 },
-    users:     { total: 3210,   change: 18.7, chart: chart.map(d => ({ date: d.date, value: d.explorers })) },
-    payments:  { total: 1842,   change: 9.4,  chart: chart.map(d => ({ date: d.date, value: Math.round(Math.random() * 80 + 40) })) },
-    topEvents: [
-      { id:'1', title:'Afrobeats Night',  provider:'TxEvents',  category:'nightlife',  ticketsSold:240, revenue:12000, status:'active' },
-      { id:'2', title:'Jazz & Wine',      provider:'LuxEvents', category:'concert',    ticketsSold:180, revenue:9000,  status:'active' },
-      { id:'3', title:'Comedy Fiesta',    provider:'PrimeShow', category:'theatre',    ticketsSold:150, revenue:7500,  status:'active' },
-      { id:'4', title:'Tech Summit 2026', provider:'TechHub',   category:'conference', ticketsSold:320, revenue:32000, status:'completed' },
-      { id:'5', title:'Food Festival',    provider:'GastroPro', category:'food',       ticketsSold:580, revenue:17400, status:'active' },
-    ],
+    revenue: { total: 0, formatted: null, change: 0 },
+    tickets: { total: 0, change: 0, chart: [] },
+    users: { total: 0, change: 0, chart: [] },
+    topEvents: [],
   };
-};
+}
+
+function normalizeDashboardResponse(res) {
+  const stats = res?.stats ?? {};
+  const tr = stats.totalRevenue ?? {};
+  const ts = stats.ticketsSold ?? {};
+  const te = stats.totalExplorers ?? {};
+
+  const explorerTrend = (res?.explorerTrend ?? []).map((p) => ({
+    date: p.label ?? '',
+    value: Number(p.value) || 0,
+  }));
+  const ticketSales = (res?.ticketSales ?? []).map((p) => ({
+    date: p.label ?? '',
+    value: Number(p.value) || 0,
+  }));
+
+  const topExperiences = (res?.topExperiences ?? []).map((e) => ({
+    id: e.id,
+    title: e.name ?? '',
+    provider: e.provider ?? '',
+    ticketsSold: e.tickets ?? 0,
+    revenue: e.revenue ?? 0,
+    revenueFormatted: e.revenueFormatted,
+    status: e.status ?? 'active',
+  }));
+
+  return {
+    revenue: {
+      total: Number(tr.value) || 0,
+      formatted: typeof tr.formatted === 'string' ? tr.formatted : null,
+      change: tr.percentChange != null ? Number(tr.percentChange) : 0,
+    },
+    tickets: {
+      total: Number(ts.value) || 0,
+      change: ts.percentChange != null ? Number(ts.percentChange) : 0,
+      chart: ticketSales,
+    },
+    users: {
+      total: Number(te.value) || 0,
+      change: te.percentChange != null ? Number(te.percentChange) : 0,
+      chart: explorerTrend,
+    },
+    topEvents: topExperiences,
+  };
+}
 
 const fmt = (n) =>
-  n >= 1_000_000 ? `$${(n/1_000_000).toFixed(1)}M`
-  : n >= 1_000   ? `$${(n/1_000).toFixed(1)}K`
+  n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(1)}M`
+  : n >= 1_000 ? `$${(n / 1_000).toFixed(1)}K`
   : `$${n}`;
 
 const CustomTooltip = ({ active, payload, label }) => {
@@ -73,15 +102,17 @@ export default function DashboardPage() {
 
   const fetchStats = useCallback(() => {
     setLoading(true);
+    const apiPeriod = toApiPeriod(period);
     callApi({
       method: Method.GET,
-      endPoint: api.getDashboardStats(period),
+      endPoint: api.getDashboardStats(apiPeriod),
       onSuccess(response) {
-        setStats(response.stats ?? response.data ?? response);
+        setStats(normalizeDashboardResponse(response));
         setLoading(false);
       },
-      onError() {
-        setStats(mockStats(period));
+      onError(err) {
+        setStats(emptyDashboard());
+        notifyError(getApiErrorMessage(err));
         setLoading(false);
       },
     });
@@ -89,7 +120,9 @@ export default function DashboardPage() {
 
   useEffect(() => { fetchStats(); }, [fetchStats]);
 
-  const s = stats ?? mockStats(period);
+  const s = stats ?? emptyDashboard();
+
+  const revenueDisplay = s.revenue.formatted ?? fmt(s.revenue.total).replace(/^\$/, '');
 
   return (
     <div style={{ animation:'fadeIn 0.4s ease' }}>
@@ -105,7 +138,7 @@ export default function DashboardPage() {
         >
           <StatCard
             title="Total Revenue"
-            value={fmt(s.revenue.total).replace('$', '')}
+            value={revenueDisplay}
             change={s.revenue.change}
             icon={<DollarSign size={20} />}
             statKey="revenue"
@@ -149,8 +182,16 @@ export default function DashboardPage() {
               <h3 style={{ fontSize:15, fontWeight:700, color:'var(--text-primary)' }}>Explorer Trend</h3>
               <p style={{ fontSize:12, color:'var(--text-muted)', marginTop:2 }}>{s.users.total.toLocaleString()} total explorers for selected period</p>
             </div>
-            <div style={{ padding:'4px 10px', borderRadius:'var(--radius-full)', background:'var(--success-bg)', color:'var(--success)', fontSize:12, fontWeight:700 }}>
-              +{s.users.change}%
+            <div style={{
+              padding:'4px 10px',
+              borderRadius:'var(--radius-full)',
+              background: s.users.change >= 0 ? 'var(--success-bg)' : 'var(--danger-bg)',
+              color: s.users.change >= 0 ? 'var(--success)' : 'var(--danger)',
+              fontSize:12,
+              fontWeight:700,
+            }}
+            >
+              {s.users.change >= 0 ? '+' : ''}{Number(s.users.change).toFixed(1)}%
             </div>
           </div>
           <ResponsiveContainer width="100%" height={280}>
@@ -227,12 +268,19 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody>
+              {s.topEvents.length === 0 && !loading ? (
+                <tr>
+                  <td colSpan={5} style={{ padding: '20px 12px', fontSize: 13, color: 'var(--text-muted)' }}>
+                    No experiences in this period.
+                  </td>
+                </tr>
+              ) : null}
               {s.topEvents.map((ev, i) => (
-                <tr key={ev.id} style={{ borderBottom: i < s.topEvents.length-1 ? '1px solid var(--border)' : undefined }}>
+                <tr key={ev.id ?? i} style={{ borderBottom: i < s.topEvents.length - 1 ? '1px solid var(--border)' : undefined }}>
                   <td style={{ padding:'11px 12px', fontSize:13, fontWeight:500, maxWidth:140, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{ev.title}</td>
                   <td style={{ padding:'11px 12px', fontSize:12.5, color:'var(--text-secondary)' }}>{ev.provider}</td>
                   <td style={{ padding:'11px 12px', fontSize:13, fontWeight:500 }}>{ev.ticketsSold}</td>
-                  <td style={{ padding:'11px 12px', fontSize:13, fontWeight:500, color:'var(--primary)' }}>{fmt(ev.revenue)}</td>
+                  <td style={{ padding:'11px 12px', fontSize:13, fontWeight:500, color:'var(--primary)' }}>{ev.revenueFormatted ?? fmt(ev.revenue)}</td>
                   <td style={{ padding:'11px 12px' }}><StatusBadge status={ev.status} /></td>
                 </tr>
               ))}

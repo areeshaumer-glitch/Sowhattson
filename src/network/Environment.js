@@ -4,12 +4,31 @@ export const api = {
   // ── AUTH (same backend as mobile app) ────────────────────
   signin:               'auth/signin',
   logout:               'auth/logout',
+  refreshAccessToken:   'auth/refresh-token',
   updatePassword:       'auth/update-password',
-  /** Password reset request email (public). OTP + reset steps are client-only in admin UI. */
-  forgotPasswordRequest: 'auth/forgot-password',
+  /** Authenticated user profile (name, bio, etc.) */
+  updateProfile:        'profile',
+  /** Password reset (public): request OTP → verify OTP → set new password */
+  forgotPasswordRequest:   'auth/forgot-password',
+  verifyForgotPassword: 'auth/verify-forgot-password',
+  forgotPasswordReset:  'auth/reset-password',
+
+  // ── USER NOTIFICATIONS (authenticated) ────────────────────
+  getUserNotifications: (page = 1, limit = 20) => {
+    const p = new URLSearchParams();
+    p.set('page', String(page));
+    p.set('limit', String(limit));
+    return `notifications?${p.toString()}`;
+  },
+  markUserNotificationRead: (id) => `notifications/${id}/read`,
+  markAllUserNotificationsRead: 'notifications/read-all',
 
   // ── ADMIN DASHBOARD ───────────────────────────────────────
-  getDashboardStats:    (period) => `admin/dashboard/stats?period=${period}`,
+  getDashboardStats: (period) => {
+    const p = new URLSearchParams();
+    p.set('period', period);
+    return `admin/dashboard/stats?${p.toString()}`;
+  },
 
   // ── ADMIN NOTIFICATIONS ───────────────────────────────────
   getAdminNotifications: (page = 1, limit = 20, search = '', unreadOnly = '') => {
@@ -89,14 +108,16 @@ export const api = {
   deleteAdminTag:       (id) => `admin/tags/${id}`,
 
   // ── ADMIN COUPONS ─────────────────────────────────────────
-  getAdminCoupons: (page = 1, limit = 20, search = '') => {
+  getAdminCoupons: (opts = {}) => {
     const p = new URLSearchParams();
-    p.append('page', String(page));
-    p.append('limit', String(limit));
-    if (search) p.append('search', search);
-    return `admin/coupons?${p.toString()}`;
+    if (opts.eventId) p.set('eventId', opts.eventId);
+    if (opts.isActive === true || opts.isActive === false) p.set('isActive', String(opts.isActive));
+    const qs = p.toString();
+    return qs ? `admin/coupons?${qs}` : 'admin/coupons';
   },
+  getAdminCouponById:   (id) => `admin/coupons/${id}`,
   createAdminCoupon:    'admin/coupons',
+  updateAdminCoupon:    (id) => `admin/coupons/${id}`,
   deleteAdminCoupon:    (id) => `admin/coupons/${id}`,
 
   // ── ADMIN VIBES ───────────────────────────────────────────

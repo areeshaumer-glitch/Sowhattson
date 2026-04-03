@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppLayout } from './components/layout/AppLayout';
 import { ScrollToTop } from './components/layout/ScrollToTop';
+import { AppToaster } from './components/ui/AppToaster';
 import { useAuthStore } from './store/authStore';
 
 import LoginPage from './pages/Login';
@@ -38,6 +39,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <ScrollToTop />
+      <AppToaster />
       <Routes>
         <Route path="/login" element={<RedirectIfAuth><LoginPage /></RedirectIfAuth>} />
         <Route path="/forgot-password" element={<RedirectIfAuth><ForgotPasswordEmailPage /></RedirectIfAuth>} />

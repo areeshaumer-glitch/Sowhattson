@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { BASE_URL } from './Environment';
+import { BASE_URL, api } from './Environment';
 import { useAuthStore } from '../store/authStore';
 
 /* ─── Constants (mirrors mobile app) ────────────────────── */
@@ -38,13 +38,28 @@ axiosInstance.interceptors.request.use((config) => {
   return config;
 });
 
+/** POST /auth/logout with refreshToken, then clear local session (always clears even if the request fails). */
+export async function performLogout() {
+  const refreshToken = useAuthStore.getState().refreshToken;
+  try {
+    if (refreshToken) {
+      await axiosInstance.post(api.logout, { refreshToken });
+    }
+  } catch {
+    /* 404 token not found, network, etc. — still sign out locally */
+  } finally {
+    useAuthStore.getState().logout();
+  }
+}
+
 /* ─── Token refresh helper ───────────────────────────────── */
 const refreshAccessToken = async () => {
   try {
     const refreshToken = useAuthStore.getState().refreshToken;
     if (!refreshToken) return null;
-    const response = await axiosInstance.post('auth/refresh-token', { refreshToken });
-    return response.data?.accessToken ?? null;
+    const response = await axiosInstance.post(api.refreshAccessToken, { refreshToken });
+    const accessToken = response.data?.accessToken ?? null;
+    return accessToken;
   } catch {
     return null;
   }
@@ -52,14 +67,19 @@ const refreshAccessToken = async () => {
 
 /* ─── Auth error handler (redirect to /login) ────────────── */
 const handleAuthError = (message) => {
-  useAuthStore.getState().logout();
-  window.location.href = '/login';
-  console.warn('Auth error:', message);
+  void performLogout().finally(() => {
+    window.location.href = '/login';
+    console.warn('Auth error:', message);
+  });
 };
 
-/** Sign-in / forgot-password calls return 401 for bad credentials; show onError, don't force logout. */
+/** Sign-in / password-recovery calls may return 401; show onError, don't force logout. */
 const isPublicAuthFlowEndpoint = (ep) =>
-  ep === 'auth/signin' || ep.startsWith('auth/forgot-password');
+  ep === 'auth/signin' ||
+  ep.startsWith('auth/forgot-password') ||
+  ep === 'auth/verify-forgot-password' ||
+  ep === 'auth/reset-password' ||
+  ep === api.refreshAccessToken;
 
 /* ─── callApi (mirrors mobile NetworkManager) ────────────── */
 export const callApi = async ({

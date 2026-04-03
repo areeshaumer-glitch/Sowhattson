@@ -6,45 +6,46 @@ import { Card } from '../../components/ui/Card';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { getApiErrorMessage } from '../../utils/apiErrorMessage';
+import { notifyError, notifySuccess } from '../../utils/notify';
 
 export default function SettingsPasswordPage() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleUpdatePassword = async (e) => {
     e.preventDefault();
-    setError('');
-    setSuccess('');
     if (!currentPassword || !newPassword) {
-      setError('Please fill in all password fields.');
+      notifyError('Please fill in all password fields.');
       return;
     }
     if (newPassword.length < 8) {
-      setError('New password must be at least 8 characters.');
+      notifyError('New password must be at least 8 characters.');
       return;
     }
     if (newPassword !== confirmPassword) {
-      setError('New password and confirmation do not match.');
+      notifyError('New password and confirmation do not match.');
       return;
     }
     setLoading(true);
     await callApi({
       method: Method.POST,
       endPoint: api.updatePassword,
-      bodyParams: { currentPassword, newPassword },
-      onSuccess() {
-        setSuccess('Your password was updated successfully.');
+      bodyParams: { oldPassword: currentPassword, newPassword },
+      onSuccess(response) {
+        const msg =
+          typeof response?.message === 'string' && response.message.trim()
+            ? response.message.trim()
+            : 'Your password was updated successfully.';
+        notifySuccess(msg);
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
         setLoading(false);
       },
       onError(err) {
-        setError(getApiErrorMessage(err));
+        notifyError(getApiErrorMessage(err));
         setLoading(false);
       },
     });
@@ -89,36 +90,6 @@ export default function SettingsPasswordPage() {
           onChange={(e) => setConfirmPassword(e.target.value)}
           icon={<Lock size={15} />}
         />
-
-        {success && (
-          <div style={{
-            padding: '10px 14px',
-            borderRadius: 'var(--radius-md)',
-            background: 'var(--success-bg)',
-            border: '1px solid rgba(61,213,152,0.35)',
-            fontSize: 13,
-            color: 'var(--success)',
-            fontWeight: 500,
-          }}>
-            {success}
-          </div>
-        )}
-        {error && (
-          <div style={{
-            padding: '10px 14px',
-            borderRadius: 'var(--radius-md)',
-            background: 'var(--danger-bg)',
-            border: '1px solid rgba(234,84,85,0.25)',
-            fontSize: 13,
-            color: 'var(--danger)',
-            fontWeight: 500,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}>
-            <span>⚠</span> {error}
-          </div>
-        )}
 
         <Button
           type="submit"
