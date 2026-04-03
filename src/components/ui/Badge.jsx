@@ -59,6 +59,7 @@ export const Badge = ({
 export function statusColor(status) {
   const s = status?.toLowerCase();
   if (['active', 'confirmed', 'verified', 'success', 'visible', 'approved'].includes(s)) return 'success';
+  if (['completed'].includes(s)) return 'neutral';
   if (['draft'].includes(s)) return 'primary';
   if (['pending', 'paused'].includes(s)) return 'warning';
   if (['cancelled', 'canceled'].includes(s)) return 'cancelled';
@@ -68,10 +69,11 @@ export function statusColor(status) {
 }
 
 /** Status cell: consistent colors + capitalized label site-wide. Pass `icon` to replace the dot (e.g. payment statuses). */
-export function StatusBadge({ status, style, icon }) {
+export function StatusBadge({ status, style, icon, formatLabel }) {
+  const text = formatLabel ? formatLabel(status) : formatStatusLabel(status);
   return (
     <Badge color={statusColor(status)} dot={!icon} leading={icon} style={{ fontWeight: 500, ...style }}>
-      {formatStatusLabel(status)}
+      {text}
     </Badge>
   );
 }

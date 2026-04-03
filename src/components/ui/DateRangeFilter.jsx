@@ -1,8 +1,7 @@
 const options = [
-  { label: 'Today',   value: 'today'   },
-  { label: 'Week',    value: 'weekly'  },
-  { label: 'Month',   value: 'monthly' },
-  { label: 'Year',    value: 'yearly'  },
+  { label: 'Week',  value: 'weekly' },
+  { label: 'Month', value: 'monthly' },
+  { label: 'Year',  value: 'yearly' },
 ];
 
 export const DateRangeFilter = ({ value, onChange }) => (

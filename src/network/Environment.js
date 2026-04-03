@@ -11,6 +11,18 @@ export const api = {
   // ── ADMIN DASHBOARD ───────────────────────────────────────
   getDashboardStats:    (period) => `admin/dashboard/stats?period=${period}`,
 
+  // ── ADMIN NOTIFICATIONS ───────────────────────────────────
+  getAdminNotifications: (page = 1, limit = 20, search = '', unreadOnly = '') => {
+    const p = new URLSearchParams();
+    p.append('page', String(page));
+    p.append('limit', String(limit));
+    if (search) p.append('search', search);
+    if (unreadOnly === 'unread') p.append('read', 'false');
+    return `admin/notifications?${p.toString()}`;
+  },
+  markAdminNotificationRead:     (id) => `admin/notifications/${id}/read`,
+  markAllAdminNotificationsRead: 'admin/notifications/read-all',
+
   // ── ADMIN EVENTS ──────────────────────────────────────────
   getAdminEvents: (page = 1, limit = 20, search = '', status = '') => {
     const p = new URLSearchParams();
@@ -75,6 +87,17 @@ export const api = {
   createAdminTag:       'admin/tags',
   updateAdminTag:       (id) => `admin/tags/${id}`,
   deleteAdminTag:       (id) => `admin/tags/${id}`,
+
+  // ── ADMIN COUPONS ─────────────────────────────────────────
+  getAdminCoupons: (page = 1, limit = 20, search = '') => {
+    const p = new URLSearchParams();
+    p.append('page', String(page));
+    p.append('limit', String(limit));
+    if (search) p.append('search', search);
+    return `admin/coupons?${p.toString()}`;
+  },
+  createAdminCoupon:    'admin/coupons',
+  deleteAdminCoupon:    (id) => `admin/coupons/${id}`,
 
   // ── ADMIN VIBES ───────────────────────────────────────────
   getAdminVibes: (page = 1, limit = 20, search = '', status = '') => {

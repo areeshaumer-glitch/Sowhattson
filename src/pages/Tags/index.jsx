@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Edit2, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Plus, Edit2, ToggleLeft, ToggleRight } from 'lucide-react';
 import { callApi, Method } from '../../network/NetworkManager';
 import { api } from '../../network/Environment';
 import { ListPageToolbar } from '../../components/ui/PageHeader';
@@ -8,7 +8,7 @@ import { SearchBar } from '../../components/ui/SearchBar';
 import { DataTable } from '../../components/ui/DataTable';
 import { Modal, ConfirmModal } from '../../components/ui/Modal';
 import { Badge } from '../../components/ui/Badge';
-import { Input, Textarea } from '../../components/ui/Input';
+import { Input } from '../../components/ui/Input';
 import { Pagination } from '../../components/ui/Pagination';
 import { useDebounce } from '../../hooks/useDebounce';
 
@@ -28,7 +28,7 @@ const MOCK_TAGS = [
 const slugify = (s) =>
   s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
-const defaultForm = { name: '', description: '', isActive: true };
+const defaultForm = { name: '', isActive: true };
 
 const ab = (bg, color) => ({
   width:28, height:28, borderRadius:'var(--radius-sm)',
@@ -43,12 +43,12 @@ export default function TagsPage() {
   const [total, setTotal]             = useState(0);
   const [loading, setLoading]         = useState(true);
   const [saving, setSaving]           = useState(false);
-  const [deleting, setDeleting]       = useState(false);
   const [showModal, setShowModal]     = useState(false);
   const [editTag, setEditTag]         = useState(null);
-  const [deleteTarget, setDeleteTarget] = useState(null);
   const [form, setForm]               = useState(defaultForm);
   const [formErrors, setFormErrors]   = useState({});
+  const [statusToggleTarget, setStatusToggleTarget] = useState(null);
+  const [toggleLoading, setToggleLoading] = useState(false);
   const debouncedSearch               = useDebounce(search, 350);
   const LIMIT = 8;
 
@@ -64,8 +64,7 @@ export default function TagsPage() {
       },
       onError() {
         const filtered = MOCK_TAGS.filter((t) =>
-          t.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-          (t.description ?? '').toLowerCase().includes(debouncedSearch.toLowerCase()),
+          t.name.toLowerCase().includes(debouncedSearch.toLowerCase()),
         );
         setTags(filtered.slice((page - 1) * LIMIT, page * LIMIT));
         setTotal(filtered.length);
@@ -78,7 +77,7 @@ export default function TagsPage() {
   useEffect(() => { setPage(1); }, [debouncedSearch]);
 
   const openCreate = () => { setEditTag(null); setForm(defaultForm); setFormErrors({}); setShowModal(true); };
-  const openEdit   = (tag) => { setEditTag(tag); setForm({ name: tag.name, description: tag.description || '', isActive: tag.isActive }); setFormErrors({}); setShowModal(true); };
+  const openEdit   = (tag) => { setEditTag(tag); setForm({ name: tag.name, isActive: tag.isActive }); setFormErrors({}); setShowModal(true); };
 
   const validate = () => {
     const errors = {};
@@ -94,7 +93,7 @@ export default function TagsPage() {
   const applyCreate = () => {
     const newTag = {
       id: String(Date.now()), name: form.name.trim(),
-      slug: slugify(form.name.trim()), description: form.description,
+      slug: slugify(form.name.trim()),
       eventsCount: 0, isActive: form.isActive,
       createdAt: new Date().toISOString().split('T')[0],
       updatedAt: new Date().toISOString().split('T')[0],
@@ -105,7 +104,13 @@ export default function TagsPage() {
 
   const applyUpdate = () => {
     setTags((prev) => prev.map((t) => t.id === editTag?.id
-      ? { ...t, ...form, slug: slugify(form.name), updatedAt: new Date().toISOString().split('T')[0] }
+      ? {
+        ...t,
+        name: form.name.trim(),
+        slug: slugify(form.name),
+        isActive: form.isActive,
+        updatedAt: new Date().toISOString().split('T')[0],
+      }
       : t,
     ));
   };
@@ -116,25 +121,33 @@ export default function TagsPage() {
     callApi({
       method: editTag ? Method.PATCH : Method.POST,
       endPoint: editTag ? api.updateAdminTag(editTag.id) : api.createAdminTag,
-      bodyParams: form,
+      bodyParams: { name: form.name.trim(), isActive: form.isActive },
       onSuccess() { editTag ? applyUpdate() : applyCreate(); setShowModal(false); setSaving(false); },
       onError()   { editTag ? applyUpdate() : applyCreate(); setShowModal(false); setSaving(false); },
     });
   };
 
-  const handleDelete = () => {
-    if (!deleteTarget) return;
-    setDeleting(true);
+  const handleConfirmStatusToggle = () => {
+    if (!statusToggleTarget) return;
+    const row = statusToggleTarget;
+    const next = !row.isActive;
+    const today = new Date().toISOString().split('T')[0];
+    setToggleLoading(true);
     callApi({
-      method: Method.DELETE,
-      endPoint: api.deleteAdminTag(deleteTarget.id),
-      onSuccess() {},
-      onError()  {},
+      method: Method.PATCH,
+      endPoint: api.updateAdminTag(row.id),
+      bodyParams: { name: row.name, isActive: next },
+      onSuccess() {
+        setTags((prev) => prev.map((t) => (t.id === row.id ? { ...t, isActive: next, updatedAt: today } : t)));
+        setStatusToggleTarget(null);
+        setToggleLoading(false);
+      },
+      onError() {
+        setTags((prev) => prev.map((t) => (t.id === row.id ? { ...t, isActive: next, updatedAt: today } : t)));
+        setStatusToggleTarget(null);
+        setToggleLoading(false);
+      },
     });
-    setTags((prev) => prev.filter((t) => t.id !== deleteTarget.id));
-    setTotal((t) => t - 1);
-    setDeleteTarget(null);
-    setDeleting(false);
   };
 
   const columns = [
@@ -142,12 +155,6 @@ export default function TagsPage() {
       key: 'name',
       label: 'Tag Name',
       render: (v) => <span style={{ fontWeight: 500, fontSize: 13.5 }}>{v}</span>,
-    },
-    {
-      key: 'eventsCount',
-      label: 'Experiences',
-      align: 'center',
-      render: (v) => <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>{v}</span>,
     },
     {
       key: 'isActive', label: 'Status', align: 'center',
@@ -166,11 +173,14 @@ export default function TagsPage() {
           </button>
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); setDeleteTarget(row); }}
-            title={row.eventsCount > 0 ? `Delete tag (${row.eventsCount} linked experiences)` : 'Delete tag'}
-            style={ab('var(--danger-bg)', 'var(--danger)')}
+            onClick={(e) => { e.stopPropagation(); setStatusToggleTarget(row); }}
+            title={row.isActive ? 'Deactivate tag' : 'Activate tag'}
+            style={ab(
+              row.isActive ? 'var(--success-bg)' : 'rgba(108,108,112,0.12)',
+              row.isActive ? 'var(--success)' : 'var(--text-secondary)',
+            )}
           >
-            <Trash2 size={13} />
+            {row.isActive ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
           </button>
         </div>
       ),
@@ -211,13 +221,40 @@ export default function TagsPage() {
           {form.name && (
             <p style={{ fontSize:11.5, color:'var(--text-muted)', marginTop:-10 }}>Slug: <strong>/{slugify(form.name)}</strong></p>
           )}
-          <Textarea label="Description" placeholder="Briefly describe this tag…" value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
-          <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-            <label style={{ fontSize:13, fontWeight:600, color:'var(--text-secondary)' }}>Status</label>
-            <button type="button" onClick={() => setForm((f) => ({ ...f, isActive: !f.isActive }))}
-              style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 14px', borderRadius:'var(--radius-full)', border:'none', cursor:'pointer',
-                background: form.isActive ? 'var(--success-bg)' : 'var(--border)', color: form.isActive ? 'var(--success)' : 'var(--text-muted)',
-                fontSize:13, fontWeight:600, fontFamily:'inherit', transition:'background 0.2s, color 0.2s' }}>
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              gap: 10,
+              rowGap: 8,
+              width: '100%',
+              maxWidth: '100%',
+              minWidth: 0,
+            }}
+          >
+            <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', flexShrink: 0 }}>Status</label>
+            <button
+              type="button"
+              onClick={() => setForm((f) => ({ ...f, isActive: !f.isActive }))}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '6px 14px',
+                borderRadius: 'var(--radius-full)',
+                border: 'none',
+                cursor: 'pointer',
+                background: form.isActive ? 'var(--success-bg)' : 'var(--border)',
+                color: form.isActive ? 'var(--success)' : 'var(--text-muted)',
+                fontSize: 13,
+                fontWeight: 600,
+                fontFamily: 'inherit',
+                transition: 'background 0.2s, color 0.2s',
+                maxWidth: '100%',
+                boxSizing: 'border-box',
+              }}
+            >
               {form.isActive ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
               {form.isActive ? 'Active' : 'Inactive'}
             </button>
@@ -226,13 +263,18 @@ export default function TagsPage() {
       </Modal>
 
       <ConfirmModal
-        isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={handleDelete}
-        loading={deleting} title="Delete Tag" confirmLabel="Delete" variant="danger"
+        isOpen={!!statusToggleTarget}
+        onClose={() => { if (!toggleLoading) setStatusToggleTarget(null); }}
+        onConfirm={handleConfirmStatusToggle}
+        loading={toggleLoading}
+        title={statusToggleTarget?.isActive ? 'Deactivate tag' : 'Activate tag'}
+        confirmLabel={statusToggleTarget?.isActive ? 'Deactivate' : 'Activate'}
+        variant={statusToggleTarget?.isActive ? 'danger' : 'primary'}
         message={
-          deleteTarget
-            ? (deleteTarget.eventsCount > 0
-              ? `The tag "${deleteTarget.name}" is linked to ${deleteTarget.eventsCount} experience(s). Deleting may affect those listings. Are you sure you want to continue? This cannot be undone.`
-              : `Are you sure you want to delete the tag "${deleteTarget.name}"? This action cannot be undone.`)
+          statusToggleTarget
+            ? statusToggleTarget.isActive
+              ? `Deactivate "${statusToggleTarget.name}"? It will show as inactive and may be hidden when tagging experiences.`
+              : `Activate "${statusToggleTarget.name}"? It will be available as an active tag for experiences.`
             : ''
         }
       />

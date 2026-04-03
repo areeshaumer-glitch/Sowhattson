@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { User, Camera } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { User } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { Card } from '../../components/ui/Card';
 import { Input } from '../../components/ui/Input';
@@ -9,26 +9,39 @@ export default function SettingsProfilePage() {
   const user = useAuthStore((s) => s.user);
   const updateUser = useAuthStore((s) => s.updateUser);
 
-  const [name, setName] = useState(() => user?.name || '');
-  const [email, setEmail] = useState(() => user?.email || user?.identifier || user?.username || '');
+  const [name, setName] = useState('');
   const [saved, setSaved] = useState(false);
+
+  const adminEmail =
+    user?.email || user?.identifier || user?.username || '';
+
+  // Initial state runs before persist rehydration; sync name when store profile fields change (not on every keystroke).
+  const storeProfileKey = user
+    ? `${user.id ?? ''}|${user.email ?? ''}|${user.identifier ?? ''}|${user.username ?? ''}|${user.name ?? ''}`
+    : '';
+  useEffect(() => {
+    const u = useAuthStore.getState().user;
+    if (!u) {
+      setName('');
+      return;
+    }
+    setName(u.name || '');
+  }, [storeProfileKey]);
 
   const handleSave = (e) => {
     e.preventDefault();
-    updateUser({ name: name.trim(), email: email.trim(), identifier: email.trim() });
+    updateUser({ name: name.trim() });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
 
-  const initial = (name || user?.name || 'A')[0]?.toUpperCase() || 'A';
-
   return (
-    <Card style={{ maxWidth: 520, margin: '0 auto' }}>
+    <Card style={{ width: '100%', maxWidth: 800, margin: '0 auto' }}>
       <h3 style={{ fontSize: 20, fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 8px' }}>
         My Profile
       </h3>
       <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5, margin: '0 0 28px' }}>
-        Update your display name and contact email. This information is used across the admin panel.
+        Update your display name. Your admin email is shown for reference and cannot be changed here.
       </p>
 
       
@@ -44,11 +57,21 @@ export default function SettingsProfilePage() {
         <Input
           label="Email"
           type="email"
-          placeholder="Enter your email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          readOnly
+          value={adminEmail}
+          placeholder="—"
           icon={<User size={15} />}
-          autoComplete="email"
+          autoComplete="off"
+          title="Email cannot be changed"
+          containerStyle={{ cursor: 'not-allowed' }}
+          style={{
+            cursor: 'not-allowed',
+            color: 'var(--text-muted)',
+          }}
+          onFocus={(e) => {
+            e.target.style.borderColor = 'var(--border)';
+            e.target.style.boxShadow = 'none';
+          }}
         />
 
         {saved && (

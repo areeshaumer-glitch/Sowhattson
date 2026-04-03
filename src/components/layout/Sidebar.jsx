@@ -1,23 +1,28 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, CalendarDays, Ticket, Store, Users,
-  Tag, Zap, Star, CreditCard, Settings, LogOut, X,
+  Tag, Percent, Star, Bell, CreditCard, Settings, LogOut, X,
   ChevronRight,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { BrandWordmark } from '../brand/BrandWordmark';
 
+const ICON = 17;
+
 const navItems = [
-  { to: '/dashboard', label: 'Dashboard',  icon: <LayoutDashboard size={18} />, end: true },
-  { to: '/experiences', label: 'Experiences', icon: <CalendarDays size={18} /> },
-  { to: '/tickets',   label: 'Tickets',    icon: <Ticket size={18} /> },
-  { to: '/providers', label: 'Providers',  icon: <Store size={18} /> },
-  { to: '/explorers', label: 'Explorers',  icon: <Users size={18} /> },
-  { to: '/tags',      label: 'Tags',       icon: <Tag size={18} /> },
-  // { to: '/vibes',     label: 'Vibes',      icon: <Zap size={18} /> },
-  { to: '/reviews',   label: 'Reviews',    icon: <Star size={18} /> },
-  { to: '/payments',  label: 'Payments',   icon: <CreditCard size={18} /> },
-  { to: '/settings',  label: 'Settings',   icon: <Settings size={18} /> },
+  { to: '/dashboard', label: 'Dashboard',  icon: <LayoutDashboard size={ICON} />, end: true },
+  { to: '/experiences', label: 'Experiences', icon: <CalendarDays size={ICON} /> },
+  { to: '/tickets',   label: 'Tickets',    icon: <Ticket size={ICON} /> },
+  { to: '/providers', label: 'Providers',  icon: <Store size={ICON} /> },
+  { to: '/explorers', label: 'Explorers',  icon: <Users size={ICON} /> },
+  { to: '/tags',      label: 'Tags',       icon: <Tag size={ICON} /> },
+  { to: '/coupons',   label: 'Coupons',    icon: <Percent size={ICON} /> },
+  // { to: '/vibes',     label: 'Vibes',      icon: <Zap size={ICON} /> },
+  { to: '/reviews',   label: 'Reviews',    icon: <Star size={ICON} /> },
+
+  { to: '/payouts',  label: 'Payouts',   icon: <CreditCard size={ICON} /> },
+  { to: '/notifications', label: 'Notifications', icon: <Bell size={ICON} /> },
+  { to: '/settings',  label: 'Settings',   icon: <Settings size={ICON} /> },
 ];
 
 export const Sidebar = ({ isOpen, onClose, isMobile }) => {
@@ -56,12 +61,12 @@ export const Sidebar = ({ isOpen, onClose, isMobile }) => {
           zIndex: 100,
           transform: isMobile ? (isOpen ? 'translateX(0)' : 'translateX(-100%)') : 'translateX(0)',
           transition: 'transform 0.28s cubic-bezier(0.4,0,0.2,1)',
-          overflowY: 'auto',
+          overflow: 'hidden',
           overflowX: 'hidden',
         }}
       >
         <div style={{
-          padding: '22px 18px 18px',
+          padding: '10px 12px 8px',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
           borderBottom: '1px solid rgba(255,255,255,0.07)',
           flexShrink: 0,
@@ -70,14 +75,24 @@ export const Sidebar = ({ isOpen, onClose, isMobile }) => {
             <BrandWordmark variant="dark" />
           </div>
           {isMobile && (
-            <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.5)', display: 'flex' }}>
+            <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.5)', display: 'flex', padding: 4 }}>
               <X size={18} />
             </button>
           )}
         </div>
 
-        <nav style={{ flex: 1, padding: '12px 10px', overflowY: 'auto' }}>
-         
+        <nav
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+            padding: '6px 10px 6px',
+            overflowY: 'auto',
+            overflowX: 'hidden',
+          }}
+        >
           {navItems.map((item) => (
             <NavLink
               key={item.to}
@@ -88,18 +103,17 @@ export const Sidebar = ({ isOpen, onClose, isMobile }) => {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                gap: 11,
-                padding: '10px 12px',
+                gap: 10,
+                padding: '8px 12px',
                 borderRadius: 'var(--radius-md)',
-                marginBottom: 2,
                 textDecoration: 'none',
                 position: 'relative',
                 overflow: 'hidden',
                 transition: 'background 0.15s',
                 background: isActive ? undefined : 'transparent',
-                color: isActive ? '#fff' : 'rgba(255,255,255,0.6)',
+                color: isActive ? '#fff' : 'rgba(255,255,255,0.62)',
                 fontWeight: isActive ? 700 : 500,
-                fontSize: 13.5,
+                fontSize: 14,
               })}
             >
               {({ isActive }) => (
@@ -112,12 +126,12 @@ export const Sidebar = ({ isOpen, onClose, isMobile }) => {
                       zIndex: 0,
                     }} />
                   )}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 11, position: 'relative', zIndex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, position: 'relative', zIndex: 1 }}>
                     {item.icon}
                     {item.label}
                   </div>
                   {isActive && (
-                    <ChevronRight size={14} style={{ position: 'relative', zIndex: 1, opacity: 0.8 }} />
+                    <ChevronRight size={14} style={{ position: 'relative', zIndex: 1, opacity: 0.85 }} />
                   )}
                 </>
               )}
@@ -126,7 +140,7 @@ export const Sidebar = ({ isOpen, onClose, isMobile }) => {
         </nav>
 
         <div style={{
-          padding: '12px 10px',
+          padding: '8px 10px 10px',
           borderTop: '1px solid rgba(255,255,255,0.07)',
           flexShrink: 0,
         }}>
@@ -155,16 +169,17 @@ export const Sidebar = ({ isOpen, onClose, isMobile }) => {
             </div>
           )} */}
           <button
+            type="button"
             onClick={handleLogout}
             style={{
               width: '100%',
               display: 'flex', alignItems: 'center', gap: 10,
-              padding: '9px 12px',
+              padding: '8px 12px',
               borderRadius: 'var(--radius-md)',
               background: 'rgba(234,84,85,0.12)',
               border: 'none', cursor: 'pointer',
               color: 'rgba(238, 232, 232, 0.92)',
-              fontSize: 13.5, fontWeight: 600,
+              fontSize: 13, fontWeight: 600,
               fontFamily: 'inherit',
               transition: 'background 0.15s',
             }}

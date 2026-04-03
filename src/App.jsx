@@ -9,17 +9,19 @@ import ForgotPasswordOtpPage from './pages/ForgotPassword/OtpPage';
 import ForgotPasswordResetPage from './pages/ForgotPassword/ResetPage';
 import DashboardPage from './pages/Dashboard';
 import ExperiencesPage from './pages/Experiences/index.jsx';
+import ExperienceDetailPage from './pages/Experiences/ExperienceDetailPage.jsx';
 import TicketsPage from './pages/Tickets';
 import ProvidersPage from './pages/Providers';
 import ProviderDetailPage from './pages/Providers/ProviderDetailPage';
 import ExplorersPage from './pages/Explorers';
 import TagsPage from './pages/Tags';
+import CouponsPage from './pages/Coupons';
+import NotificationsPage from './pages/Notifications';
 import VibesPage from './pages/Vibes';
 import ReviewsPage from './pages/Reviews';
 import PaymentsPage from './pages/Payments';
 import SettingsLayout from './pages/Settings/SettingsLayout';
 import SettingsProfilePage from './pages/Settings/SettingsProfilePage';
-import SettingsNotificationsPage from './pages/Settings/SettingsNotificationsPage';
 import SettingsPasswordPage from './pages/Settings/SettingsPasswordPage';
 
 function RequireAuth({ children }) {
@@ -46,6 +48,7 @@ export default function App() {
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/experiences" element={<ExperiencesPage />} />
+          <Route path="/experiences/:experienceId" element={<ExperienceDetailPage />} />
           <Route path="/events" element={<Navigate to="/experiences" replace />} />
           <Route path="/tickets" element={<TicketsPage />} />
           <Route path="/providers" element={<ProvidersPage />} />
@@ -53,13 +56,16 @@ export default function App() {
           <Route path="/explorers" element={<ExplorersPage />} />
           <Route path="/users" element={<Navigate to="/explorers" replace />} />
           <Route path="/tags" element={<TagsPage />} />
+          <Route path="/coupons" element={<CouponsPage />} />
           <Route path="/vibes" element={<VibesPage />} />
           <Route path="/reviews" element={<ReviewsPage />} />
-          <Route path="/payments" element={<PaymentsPage />} />
+          <Route path="/notifications" element={<NotificationsPage />} />
+          <Route path="/payouts" element={<PaymentsPage />} />
+          <Route path="/payments" element={<Navigate to="/payouts" replace />} />
           <Route path="/settings" element={<SettingsLayout />}>
             <Route index element={<Navigate to="profile" replace />} />
             <Route path="profile" element={<SettingsProfilePage />} />
-            <Route path="notifications" element={<SettingsNotificationsPage />} />
+            <Route path="notifications" element={<Navigate to="/notifications" replace />} />
             <Route path="password" element={<SettingsPasswordPage />} />
           </Route>
           <Route path="/profile" element={<Navigate to="/settings/profile" replace />} />

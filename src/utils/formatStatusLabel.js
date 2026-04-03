@@ -5,6 +5,13 @@ const SPECIAL = {
 /**
  * Human-readable status for UI: capitalize words, underscores → spaces, common spelling fixes.
  */
+/** Payment UI: show "In Progress" instead of "Pending" (value stays `pending`). */
+export function formatPaymentStatusLabel(raw) {
+  const lower = String(raw ?? '').trim().toLowerCase().replace(/\s+/g, '_');
+  if (lower === 'pending') return 'In Progress';
+  return formatStatusLabel(raw);
+}
+
 export function formatStatusLabel(raw) {
   if (raw == null || raw === '') return '—';
   const s = String(raw).trim();

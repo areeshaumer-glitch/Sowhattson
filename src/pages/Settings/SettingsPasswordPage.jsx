@@ -51,7 +51,7 @@ export default function SettingsPasswordPage() {
   };
 
   return (
-    <Card style={{ maxWidth: 520, margin: '0 auto' }}>
+    <Card style={{ width: '100%', maxWidth: 800, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18 }}>
         <span style={{ color: 'var(--primary)' }}><Lock size={18} /></span>
         <h3 style={{ fontSize: 17, fontWeight: 700, margin: 0 }}>Change password</h3>

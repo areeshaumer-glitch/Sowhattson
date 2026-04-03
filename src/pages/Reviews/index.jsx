@@ -1,12 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { EyeOff, Eye, Trash2 } from 'lucide-react';
 import { callApi, Method } from '../../network/NetworkManager';
 import { api } from '../../network/Environment';
 import { SearchBar } from '../../components/ui/SearchBar';
 import { Select } from '../../components/ui/Select';
 import { DataTable } from '../../components/ui/DataTable';
 import { Pagination } from '../../components/ui/Pagination';
-import { ConfirmModal } from '../../components/ui/Modal';
 import { useDebounce } from '../../hooks/useDebounce';
 import { ListPageToolbar } from '../../components/ui/PageHeader';
 
@@ -25,12 +23,6 @@ const STATUS_OPTIONS = [
   { label:'Hidden',     value:'hidden' }, { label:'Flagged', value:'flagged' },
 ];
 
-const ab = (bg, color) => ({
-  width:28, height:28, borderRadius:'var(--radius-sm)',
-  display:'flex', alignItems:'center', justifyContent:'center',
-  background:bg, border:'none', cursor:'pointer', color,
-});
-
 export default function ReviewsPage() {
   const [search, setSearch]             = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -38,8 +30,6 @@ export default function ReviewsPage() {
   const [reviews, setReviews]           = useState([]);
   const [total, setTotal]               = useState(0);
   const [loading, setLoading]           = useState(true);
-  const [confirm, setConfirm]           = useState(null);
-  const [actLoading, setActLoading]     = useState(false);
   const debouncedSearch                 = useDebounce(search, 350);
   const LIMIT = 10;
 
@@ -54,9 +44,10 @@ export default function ReviewsPage() {
         setLoading(false);
       },
       onError() {
+        const q = debouncedSearch.toLowerCase();
         const filtered = MOCK.filter((r) =>
-          (r.user.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-           r.event.title.toLowerCase().includes(debouncedSearch.toLowerCase())) &&
+          (r.user.name.toLowerCase().includes(q) ||
+            (r.comment && r.comment.toLowerCase().includes(q))) &&
           (statusFilter==='' || r.status===statusFilter),
         );
         setReviews(filtered.slice((page-1)*LIMIT, page*LIMIT));
@@ -69,69 +60,57 @@ export default function ReviewsPage() {
   useEffect(() => { fetchReviews(); }, [fetchReviews]);
   useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter]);
 
-  const handleAction = () => {
-    if (!confirm) return;
-    setActLoading(true);
-    const method = confirm.type === 'delete' ? Method.DELETE : Method.PATCH;
-    const endpoint = confirm.type === 'delete' ? api.deleteAdminReview(confirm.review.id) : api.updateAdminReview(confirm.review.id);
-    const body = confirm.type !== 'delete' ? { status: confirm.type === 'hide' ? 'hidden' : 'visible' } : undefined;
-
-    callApi({
-      method, endPoint: endpoint, bodyParams: body,
-      onSuccess() { applyAction(); },
-      onError()   { applyAction(); },
-    });
+  const stars = (n) => {
+    const r = Math.min(5, Math.max(0, Number(n) || 0));
+    return '★'.repeat(r) + '☆'.repeat(5 - r);
   };
 
-  const applyAction = () => {
-    if (!confirm) return;
-    if (confirm.type === 'delete') { setReviews((prev) => prev.filter((r) => r.id !== confirm.review.id)); setTotal((t) => t-1); }
-    else { setReviews((prev) => prev.map((r) => r.id!==confirm.review.id ? r : { ...r, status: confirm.type==='hide'?'hidden':'visible' })); }
-    setConfirm(null); setActLoading(false);
-  };
-
-  const stars = (n) => '★'.repeat(n)+'☆'.repeat(5-n);
+  const colQ = { width: '25%' };
 
   const columns = [
     {
-      key:'user', label:'Explorer',
-      render:(_,row) => <div><p style={{ fontWeight:500, fontSize:13 }}>{row.user.name}</p><p style={{ fontSize:11, color:'var(--text-muted)' }}>{row.createdAt}</p></div>,
-    },
-    { key:'event', label:'Experience', render:(_,row) => <span style={{ fontSize:12.5 }}>{row.event.title}</span> },
-    { key:'rating', label:'Rating', render:(v) => <span style={{ color:'var(--warning)', fontSize:13, letterSpacing:1 }}>{stars(v)}</span> },
-    {
-      key:'comment', label:'Comment',
-      render:(v) => <span style={{ fontSize:12.5, color:'var(--text-secondary)', maxWidth:200, display:'block', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{v||'—'}</span>,
-    },
-    {
-      key:'actions', label:'Action', align:'center', width:'100px',
-      render:(_,row) => (
-        <div style={{ display:'flex', gap:5, justifyContent:'center' }}>
-          {row.status!=='hidden'
-            ? <button onClick={(e)=>{ e.stopPropagation(); setConfirm({type:'hide',review:row}); }} style={ab('var(--warning-bg)','var(--warning)')}><EyeOff size={13}/></button>
-            : <button onClick={(e)=>{ e.stopPropagation(); setConfirm({type:'show',review:row}); }} style={ab('var(--success-bg)','var(--success)')}><Eye size={13}/></button>
-          }
-          <button onClick={(e)=>{ e.stopPropagation(); setConfirm({type:'delete',review:row}); }} style={ab('var(--danger-bg)','var(--danger)')}><Trash2 size={13}/></button>
-        </div>
+      key: 'user',
+      label: 'Explorer',
+      ...colQ,
+      render: (_, row) => (
+        <span style={{ fontWeight: 500, fontSize: 13 }}>{row.user?.name ?? row.userName ?? '—'}</span>
       ),
+    },
+    {
+      key: 'createdAt',
+      label: 'Date',
+      ...colQ,
+      render: (_, row) => {
+        const d = row.createdAt ?? row.created_at ?? row.date;
+        return <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{d ?? '—'}</span>;
+      },
+    },
+    {
+      key: 'rating', label: 'Rating', ...colQ, align: 'center',
+      render: (v) => <span style={{ color: 'var(--warning)', fontSize: 13, letterSpacing: 1 }}>{stars(v)}</span>,
+    },
+    {
+      key: 'comment', label: 'Comment', ...colQ, wrap: true,
+      render: (v) => <span style={{ fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.45 }}>{v || '—'}</span>,
     },
   ];
 
   return (
     <div style={{ animation:'fadeIn 0.4s ease' }}>
       <ListPageToolbar title="Reviews">
-        <SearchBar value={search} onChange={setSearch} placeholder="Search by explorer or experience…" style={{ flex:'1 1 240px', maxWidth:380, minWidth:160 }} />
+        <SearchBar value={search} onChange={setSearch} placeholder="Search by explorer or comment…" style={{ flex:'1 1 240px', maxWidth:380, minWidth:160 }} />
         <Select value={statusFilter} onChange={setStatusFilter} options={STATUS_OPTIONS} style={{ width:160, flexShrink:0 }} />
       </ListPageToolbar>
-      <DataTable columns={columns} data={reviews} isLoading={loading} emptyMessage="No reviews found." rowKey="id" />
-      <Pagination page={page} totalPages={Math.ceil(total/LIMIT)} total={total} limit={LIMIT} onPageChange={setPage} />
-      <ConfirmModal
-        isOpen={!!confirm} onClose={()=>setConfirm(null)} onConfirm={handleAction} loading={actLoading}
-        variant={confirm?.type==='delete'?'danger':'primary'}
-        title={confirm?.type==='delete'?'Delete Review':confirm?.type==='hide'?'Hide Review':'Show Review'}
-        confirmLabel={confirm?.type==='delete'?'Delete':confirm?.type==='hide'?'Hide':'Show'}
-        message={`Are you sure you want to ${confirm?.type} this review by "${confirm?.review.user.name}"?`}
+      <DataTable
+        columns={columns}
+        data={reviews}
+        isLoading={loading}
+        emptyMessage="No reviews found."
+        rowKey="id"
+        fixedLayout
+        minWidth={640}
       />
+      <Pagination page={page} totalPages={Math.ceil(total/LIMIT)} total={total} limit={LIMIT} onPageChange={setPage} />
     </div>
   );
 }

@@ -2,6 +2,8 @@ export function DataTable({
   columns, data, isLoading = false, emptyMessage = 'No results found.',
   onRowClick, rowKey = 'id',
   headerThStyle,
+  fixedLayout = false,
+  minWidth = 560,
 }) {
   return (
     <div style={{
@@ -11,7 +13,13 @@ export function DataTable({
       border: '1px solid var(--border)',
       background: 'var(--bg-card)',
     }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
+      <table style={{
+        width: '100%',
+        borderCollapse: 'collapse',
+        minWidth,
+        ...(fixedLayout ? { tableLayout: 'fixed' } : {}),
+      }}
+      >
         <thead>
           <tr style={{ borderBottom: '2px solid var(--border)' }}>
             {columns.map((col) => (
@@ -87,6 +95,7 @@ export function DataTable({
                   const value = col.key.includes('.')
                     ? col.key.split('.').reduce((obj, k) => obj?.[k], row)
                     : row[col.key];
+                  const nowrap = col.wrap !== true;
                   return (
                     <td
                       key={col.key}
@@ -96,10 +105,17 @@ export function DataTable({
                         color: 'var(--text-primary)',
                         textAlign: col.align || 'left',
                         verticalAlign: 'middle',
-                        maxWidth: 260,
+                        width: col.width,
+                        maxWidth: col.maxWidth !== undefined ? col.maxWidth : (col.width ? undefined : 260),
                       }}
                     >
-                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <div style={{
+                        overflow: nowrap ? 'hidden' : undefined,
+                        textOverflow: nowrap ? 'ellipsis' : undefined,
+                        whiteSpace: nowrap ? 'nowrap' : 'normal',
+                        wordBreak: col.wrap ? 'break-word' : undefined,
+                      }}
+                      >
                         {col.render ? col.render(value, row) : value ?? '—'}
                       </div>
                     </td>

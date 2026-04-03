@@ -100,7 +100,11 @@ export const AppLayout = () => {
           data-app-scroll-main
           style={{
             flex: 1,
+            minWidth: 0,
+            maxWidth: '100%',
+            overflowX: 'hidden',
             overflowY: 'auto',
+            WebkitOverflowScrolling: 'touch',
             padding: isMobile ? '16px 16px 24px' : '28px 28px',
           }}
         >

@@ -109,6 +109,14 @@ export default function ProvidersPage() {
       label: 'Email',
       render: (v) => <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{v || '—'}</span>,
     },
+    {
+      key: 'region',
+      label: 'Region',
+      render: (_, row) => {
+        const r = row.region ?? row.country;
+        return <span style={{ fontSize: 12.5, color: 'var(--text-secondary)', fontWeight: 500 }}>{r || '—'}</span>;
+      },
+    },
     { key: 'eventsCount', label: 'Experiences', align: 'center', render: (v) => <span style={{ fontSize: 13, fontWeight: 500 }}>{v}</span> },
     {
       key: 'revenue',

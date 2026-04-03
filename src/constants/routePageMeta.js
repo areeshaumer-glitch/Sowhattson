@@ -3,9 +3,6 @@ export function getDefaultPageMeta(pathname) {
   if (pathname.startsWith('/settings/profile')) {
     return { title: 'My Profile' };
   }
-  if (pathname.startsWith('/settings/notifications')) {
-    return { title: 'Notification Setting' };
-  }
   if (pathname.startsWith('/settings/password')) {
     return { title: 'Change Password' };
   }
@@ -17,8 +14,10 @@ export function getDefaultPageMeta(pathname) {
     '/providers': { title: 'Providers' },
     '/explorers': { title: 'Explorers' },
     '/tags': { title: 'Tags' },
+    '/coupons': { title: 'Coupons' },
     '/reviews': { title: 'Reviews' },
-    '/payments': { title: 'Payments' },
+    '/notifications': { title: 'Notifications' },
+    '/payouts': { title: 'Payouts' },
     '/vibes': { title: 'Vibes' },
     '/settings': { title: 'Settings' },
   };

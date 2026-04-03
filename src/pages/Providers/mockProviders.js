@@ -23,7 +23,7 @@ export const MOCK_PROVIDERS = Array.from({ length: 18 }, (_, i) => {
   const email = `provider${i + 1}@business.com`;
   const name = ['Tunde Oye', 'Aisha Bello', 'Chidi Eze', 'Ngozi Obi', 'Seun Kuti', 'Yemi Shoaib', 'Kola Babs', 'Funmi Ada', 'Emeka Eze', 'Zainab Ali', 'Bola James', 'Ada Osei', 'Femi Ade', 'Nneka Ojo', 'Jide Cole', 'Sola Tai', 'Kunle Ade', 'Amaka Nze'][i];
   const religions = ['Christianity', 'Islam', 'Christianity', 'Islam', 'Traditional', 'Christianity', 'Islam', 'Prefer not to say', 'Christianity', 'Islam', 'Christianity', 'Islam', 'Christianity', 'Islam', 'Traditional', 'Christianity', 'Islam', 'Christianity'];
-  const regions = ['Lagos', 'Abuja', 'Port Harcourt', 'Kano', 'Enugu', 'Ibadan', 'Lagos', 'Abuja', 'Lagos', 'Kano', 'Enugu', 'Port Harcourt', 'Lagos', 'Abuja', 'Ibadan', 'Lagos', 'Kano', 'Port Harcourt'];
+  const region = i % 2 === 0 ? 'Nigeria' : 'Ghana';
   const banks = ['GTBank', 'Access Bank', 'Zenith Bank', 'First Bank', 'UBA', 'Fidelity Bank', 'GTBank', 'Access Bank', 'Zenith Bank', 'First Bank', 'UBA', 'GTBank', 'Access Bank', 'Zenith Bank', 'First Bank', 'UBA', 'GTBank', 'Access Bank'];
   const nameParts = name.split(/\s+/);
   const firstName = nameParts[0] || '';
@@ -85,7 +85,7 @@ export const MOCK_PROVIDERS = Array.from({ length: 18 }, (_, i) => {
     suspended: i % 7 === 0,
     businessName: ['TxEvents Ltd', 'LuxEvents Co', 'PrimeShow Inc', 'TechHub NG', 'GastroPro', 'ArtSpace', 'FitLife', 'BizConnect', 'FilmHouse', 'DanceAcademy', 'VinoCo', 'CarnivalPro', 'BookFair Co', 'StyleHouse', 'SportsPro', 'GreenLife', 'TechVentures', 'FoodCraft'][i],
     phone,
-    region: regions[i],
+    region,
     bankName: isPending && i % 4 === 2 ? null : banks[i],
     accountNumber: isPending && i % 4 === 2 ? null : accountDigits,
     firstName,

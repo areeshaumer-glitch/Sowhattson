@@ -1,18 +1,16 @@
 import { NavLink, Outlet, useOutletContext } from 'react-router-dom';
-import { User, Bell, Key } from 'lucide-react';
+import { User, Key } from 'lucide-react';
 import { useMobileHeaderTitle } from '../../components/ui/PageHeader';
 
 const SUB_NAV = [
   { to: '/settings/profile', label: 'My Profile', Icon: User },
-
   { to: '/settings/password', label: 'Change Password', Icon: Key },
-  { to: '/settings/notifications', label: 'Notification Setting', Icon: Bell },
 ];
 
 export default function SettingsLayout() {
   const parentCtx = useOutletContext() ?? {};
   const { isMobile } = parentCtx;
-  useMobileHeaderTitle('Setting');
+  useMobileHeaderTitle('Settings');
 
   return (
     <div style={{ animation: 'fadeIn 0.4s ease' }}>
@@ -25,14 +23,13 @@ export default function SettingsLayout() {
           margin: '0 0 22px',
           letterSpacing: '-0.02em',
         }}>
-          Setting
+          Settings
         </h1>
       )}
       <div className="settings-body-grid">
-        <div className="settings-body-grid-spacer" aria-hidden />
         <aside style={{
           width: '100%',
-          maxWidth: 240,
+          minWidth: 0,
           background: 'var(--bg-card)',
           borderRadius: 'var(--radius-lg)',
           border: '1px solid var(--border)',
@@ -69,7 +66,6 @@ export default function SettingsLayout() {
         <div style={{ minWidth: 0, minHeight: 200 }}>
           <Outlet context={parentCtx} />
         </div>
-        <div className="settings-body-grid-spacer" aria-hidden />
       </div>
     </div>
   );

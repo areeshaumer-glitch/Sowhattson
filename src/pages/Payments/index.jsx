@@ -10,7 +10,7 @@ import { StatusBadge, statusColor } from '../../components/ui/Badge';
 import { Pagination } from '../../components/ui/Pagination';
 import { useDebounce } from '../../hooks/useDebounce';
 import { ListPageToolbar } from '../../components/ui/PageHeader';
-import { formatStatusLabel } from '../../utils/formatStatusLabel';
+import { formatPaymentStatusLabel } from '../../utils/formatStatusLabel';
 
 const MOCK = Array.from({ length:30 }, (_,i) => ({
   id:String(i+1), reference:`PSK-2026-${String(i+1).padStart(4,'0')}`,
@@ -25,7 +25,7 @@ const MOCK = Array.from({ length:30 }, (_,i) => ({
 
 const STATUS_OPTIONS = [
   { label:'All Status', value:'' }, { label:'Success', value:'success' },
-  { label:'Pending',    value:'pending' }, { label:'Failed',  value:'failed' },
+  { label:'In Progress', value:'pending' }, { label:'Failed',  value:'failed' },
   { label:'Refunded',   value:'refunded' },
 ];
 
@@ -122,7 +122,7 @@ function PaymentStatusMenu({ row, onStatusChange }) {
       <button
         ref={btnRef}
         type="button"
-        title="Change payment status"
+        title="Change payout status"
         aria-expanded={open}
         aria-haspopup="listbox"
         onClick={toggle}
@@ -146,7 +146,7 @@ function PaymentStatusMenu({ row, onStatusChange }) {
         <div
           ref={menuRef}
           role="listbox"
-          aria-label="Payment status"
+          aria-label="Payout status"
           style={{
             position: 'fixed',
             top: coords.top,
@@ -198,7 +198,7 @@ function PaymentStatusMenu({ row, onStatusChange }) {
                 }}
               >
                 <span style={{ display: 'flex', color: active ? fg : 'var(--text-secondary)' }}>{menuStatusIcon(value)}</span>
-                <span style={{ flex: 1 }}>{formatStatusLabel(value)}</span>
+                <span style={{ flex: 1 }}>{formatPaymentStatusLabel(value)}</span>
                 {active && <span style={{ fontSize: 11, color: fg, fontWeight: 600 }}>Current</span>}
               </button>
             );
@@ -280,7 +280,7 @@ export default function PaymentsPage() {
     {
       key:'status',
       label:'Status',
-      render:(v) => <StatusBadge status={v} icon={paymentStatusIcon(v)} />,
+      render:(v) => <StatusBadge status={v} icon={paymentStatusIcon(v)} formatLabel={formatPaymentStatusLabel} />,
     },
     { key:'paidAt', label:'Date', render:(v) => <span style={{ fontSize:12, color:'var(--text-muted)' }}>{v||'—'}</span> },
     // {
@@ -293,11 +293,11 @@ export default function PaymentsPage() {
 
   return (
     <div style={{ animation:'fadeIn 0.4s ease' }}>
-      <ListPageToolbar title="Payments">
-        <SearchBar value={search} onChange={setSearch} placeholder="Search by explorer or experience…" style={{ flex:'1 1 240px', maxWidth:420, minWidth:160 }} />
+      <ListPageToolbar title="Payouts">
+        <SearchBar value={search} onChange={setSearch} placeholder="Search payouts by explorer or experience…" style={{ flex:'1 1 240px', maxWidth:420, minWidth:160 }} />
         <Select value={statusFilter} onChange={setStatusFilter} options={STATUS_OPTIONS} style={{ width:160, flexShrink:0 }} />
       </ListPageToolbar>
-      <DataTable columns={columns} data={payments} isLoading={loading} emptyMessage="No payments found." rowKey="id" />
+      <DataTable columns={columns} data={payments} isLoading={loading} emptyMessage="No payouts found." rowKey="id" />
       <Pagination page={page} totalPages={Math.ceil(total/LIMIT)} total={total} limit={LIMIT} onPageChange={setPage} />
     </div>
   );

@@ -3,7 +3,7 @@ import { callApi, Method } from '../../network/NetworkManager';
 import { api } from '../../network/Environment';
 import { SearchBar } from '../../components/ui/SearchBar';
 import { DataTable } from '../../components/ui/DataTable';
-import { Badge, StatusBadge } from '../../components/ui/Badge';
+import { Badge } from '../../components/ui/Badge';
 import { Pagination } from '../../components/ui/Pagination';
 import { useDebounce } from '../../hooks/useDebounce';
 import { ListPageToolbar } from '../../components/ui/PageHeader';
@@ -14,7 +14,6 @@ const MOCK = Array.from({ length:28 }, (_,i) => ({
   email:`explorer${i+1}@example.com`,
   role:'explorer',
   isVerified:i%4!==0,
-  status:['active','active','active','suspended','active','active','active','active','active','active'][i%10],
   ticketsCount:Math.floor(Math.random()*20),
   createdAt:`2025-${String((i%12)+1).padStart(2,'0')}-10`,
 }));
@@ -65,7 +64,6 @@ export default function ExplorersPage() {
     },
     { key:'ticketsCount', label:'Tickets', align:'center', render:(v) => <span style={{ fontSize:13, fontWeight:500 }}>{v}</span> },
     { key:'isVerified', label:'Verified', align:'center', render:(v) => <Badge color={v?'success':'warning'} dot style={{ fontWeight:500 }}>{v?'Yes':'No'}</Badge> },
-    { key:'status', label:'Status', render:(v) => <StatusBadge status={v} /> },
     { key:'createdAt', label:'Joined', render:(v) => <span style={{ fontSize:12.5, color:'var(--text-muted)' }}>{v}</span> },
   ];
 

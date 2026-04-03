@@ -1,14 +1,60 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate, useParams, useOutletContext } from 'react-router-dom';
-import { ArrowLeft, CheckCircle, Info } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Info, Landmark, XCircle } from 'lucide-react';
 import { callApi, Method } from '../../network/NetworkManager';
 import { api } from '../../network/Environment';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
-import { ConfirmModal } from '../../components/ui/Modal';
+import { ConfirmModal, Modal } from '../../components/ui/Modal';
 import { findMockProvider } from './mockProviders';
 import { formatStatusLabel } from '../../utils/formatStatusLabel';
 import { useMobileHeaderTitle } from '../../components/ui/PageHeader';
+
+/** Persist verification UI when API is unavailable (mock); cleared after a successful API verify. */
+const PROVIDER_VERIFY_STORAGE_PREFIX = 'sw_admin_provider_verify:';
+
+function readPersistedVerification(id) {
+  if (id == null) return null;
+  try {
+    const raw = sessionStorage.getItem(PROVIDER_VERIFY_STORAGE_PREFIX + id);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistVerificationSnapshot(providerId, snapshot) {
+  try {
+    sessionStorage.setItem(PROVIDER_VERIFY_STORAGE_PREFIX + providerId, JSON.stringify(snapshot));
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+function clearPersistedVerification(providerId) {
+  try {
+    sessionStorage.removeItem(PROVIDER_VERIFY_STORAGE_PREFIX + providerId);
+  } catch { /* ignore */ }
+}
+
+function applyPersistedVerificationOverride(base) {
+  if (!base?.id) return base;
+  const patch = readPersistedVerification(base.id);
+  if (!patch) return base;
+  return {
+    ...base,
+    verificationStatus: patch.verificationStatus ?? base.verificationStatus,
+    isVerified: patch.isVerified ?? base.isVerified,
+    organizerVerification: {
+      phone: patch.organizerVerification?.phone ?? base.organizerVerification?.phone,
+      email: patch.organizerVerification?.email ?? base.organizerVerification?.email,
+      documentType: patch.organizerVerification?.documentType ?? base.organizerVerification?.documentType,
+      documents: patch.organizerVerification?.documents
+        ? mergeDocuments(patch.organizerVerification.documents)
+        : mergeDocuments(base.organizerVerification?.documents),
+    },
+  };
+}
 
 function emptyDocuments() {
   return {
@@ -60,52 +106,48 @@ function mergeDocPairs(demo, current) {
   };
 }
 
-function ImageSlot({ label, url }) {
-  return (
-    <div>
-      <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 8px' }}>
-        {label}
-      </p>
-      <div
-        style={{
-          borderRadius: 'var(--radius-md)',
-          overflow: 'hidden',
-          aspectRatio: '4 / 3',
-          background: 'var(--bg-input)',
-          border: '1px solid var(--border)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        {url ? (
-          <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-        ) : (
-          <span style={{ fontSize: 13, color: 'var(--text-placeholder)', fontWeight: 500 }}>No image</span>
-        )}
-      </div>
-    </div>
-  );
+function pushPairSides(out, pair, prefix) {
+  if (pair?.front) out.push({ key: `${prefix}-front`, url: pair.front });
+  if (pair?.back) out.push({ key: `${prefix}-back`, url: pair.back });
 }
 
-function DocumentPairBlock({ title, description, pair }) {
+/** ID document sides only (not selfie) — URLs only, no placeholders. */
+function collectUploadedDocumentTiles(docs) {
+  const out = [];
+  pushPairSides(out, docs.identityCard, 'identity');
+  pushPairSides(out, docs.passport, 'passport');
+  pushPairSides(out, docs.drivingLicense, 'driving');
+  pushPairSides(out, docs.nationalIdCard, 'national');
+  return out;
+}
+
+function DocumentImageTile({ url, onPreview }) {
   return (
-    <div style={{ marginBottom: 28 }}>
-      <h3 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>{title}</h3>
-      {description && (
-        <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '0 0 14px', lineHeight: 1.45 }}>{description}</p>
-      )}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
-          gap: 14,
-        }}
-      >
-        <ImageSlot label="Front" url={pair?.front} />
-        <ImageSlot label="Back" url={pair?.back} />
+    <button
+      type="button"
+      onClick={() => onPreview?.(url)}
+      aria-label="View document image full size"
+      style={{
+        display: 'block',
+        width: '100%',
+        maxWidth: '100%',
+        minWidth: 0,
+        margin: 0,
+        padding: 0,
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-md)',
+        overflow: 'hidden',
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        textAlign: 'left',
+        background: 'var(--bg-input)',
+        boxSizing: 'border-box',
+      }}
+    >
+      <div style={{ aspectRatio: '4 / 3', width: '100%', minHeight: 0 }}>
+        <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -117,6 +159,7 @@ export default function ProviderDetailPage() {
   const [loading, setLoading] = useState(true);
   const [confirm, setConfirm] = useState(null);
   const [actLoading, setActLoading] = useState(false);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
 
   const mobileNavTitle = loading
     ? 'Provider'
@@ -125,25 +168,29 @@ export default function ProviderDetailPage() {
       : 'Not found';
   useMobileHeaderTitle(mobileNavTitle);
 
-  const load = useCallback(() => {
-    setLoading(true);
+  const fetchProvider = useCallback((opts = {}) => {
+    const showLoading = opts.showLoading !== false;
+    if (showLoading) setLoading(true);
     callApi({
       method: Method.GET,
       endPoint: api.getAdminProviderById(providerId),
       onSuccess(response) {
         const row = response.data ?? response.provider ?? response;
-        setProvider(normalizeProvider(row));
-        setLoading(false);
+        const normalized = normalizeProvider(row);
+        if (normalized?.id) clearPersistedVerification(normalized.id);
+        setProvider(normalized);
+        if (showLoading) setLoading(false);
       },
       onError() {
         const mock = findMockProvider(providerId);
-        setProvider(mock ? normalizeProvider(mock) : null);
-        setLoading(false);
+        const base = mock ? normalizeProvider(mock) : null;
+        setProvider(base ? applyPersistedVerificationOverride(base) : null);
+        if (showLoading) setLoading(false);
       },
     });
   }, [providerId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { fetchProvider({ showLoading: true }); }, [fetchProvider]);
 
   const applyVerifiedUpdate = (p, confirmRef) => {
     if (!p) return p;
@@ -172,13 +219,27 @@ export default function ProviderDetailPage() {
       method: Method.PATCH,
       endPoint: api.verifyAdminProvider(provider.id),
       bodyParams: { status: confirmRef.type === 'verify' ? 'verified' : 'rejected' },
-      onSuccess() {
-        setProvider((p) => applyVerifiedUpdate(p, confirmRef));
+      onSuccess(responseData) {
+        clearPersistedVerification(provider.id);
         setConfirm(null);
         setActLoading(false);
+        const row = responseData?.data ?? responseData?.provider ?? responseData;
+        const looksLikeProvider = row && typeof row === 'object' && !Array.isArray(row)
+          && (row.verificationStatus != null || row.businessName != null || row.name != null || row.id != null);
+        if (looksLikeProvider) {
+          setProvider(normalizeProvider(row));
+          return;
+        }
+        fetchProvider({ showLoading: false });
       },
       onError() {
-        setProvider((p) => applyVerifiedUpdate(p, confirmRef));
+        const updated = applyVerifiedUpdate(provider, confirmRef);
+        setProvider(updated);
+        persistVerificationSnapshot(provider.id, {
+          verificationStatus: updated.verificationStatus,
+          isVerified: updated.isVerified,
+          organizerVerification: updated.organizerVerification,
+        });
         setConfirm(null);
         setActLoading(false);
       },
@@ -202,6 +263,7 @@ export default function ProviderDetailPage() {
 
   const ov = provider.organizerVerification || {};
   const docs = mergeDocuments(ov.documents);
+  const documentTiles = collectUploadedDocumentTiles(docs);
   const isVerified = provider.verificationStatus === 'verified';
   const isRejected = provider.verificationStatus === 'rejected';
   const initial = (provider.name || 'P')[0]?.toUpperCase() || 'P';
@@ -215,18 +277,21 @@ export default function ProviderDetailPage() {
 
   const dash = (v) => (v != null && String(v).trim() !== '' ? String(v) : '—');
 
-  const outlineBtn = {
+  const statusPillBase = {
     padding: '10px 22px',
     borderRadius: 9999,
     fontSize: 14,
     fontWeight: 600,
     fontFamily: 'inherit',
-    cursor: 'pointer',
+    cursor: 'default',
     transition: 'opacity 0.15s',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 8,
   };
 
   return (
-    <div style={{ animation: 'fadeIn 0.35s ease', maxWidth: 880 }}>
+    <div style={{ animation: 'fadeIn 0.35s ease', width: '100%', maxWidth: '100%', minWidth: 0 }}>
       <div style={{ marginBottom: 22 }}>
         <button
           type="button"
@@ -272,24 +337,28 @@ export default function ProviderDetailPage() {
             Provider detail
           </h1>
         )}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', flexShrink: 0 }}>
           {isVerified ? (
-            <button
-              type="button"
-              disabled
-              style={{
-                ...outlineBtn,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 8,
-                border: '2px solid var(--success)',
-                background: 'var(--success-bg)',
-                color: 'var(--success)',
-                cursor: 'default',
-              }}
+            <button type="button" disabled style={{
+              ...statusPillBase,
+              border: '2px solid var(--success)',
+              background: 'var(--success-bg)',
+              color: 'var(--success)',
+            }}
             >
               <CheckCircle size={18} strokeWidth={2.25} />
               Verified
+            </button>
+          ) : isRejected ? (
+            <button type="button" disabled style={{
+              ...statusPillBase,
+              border: '2px solid var(--danger)',
+              background: 'var(--danger-bg)',
+              color: 'var(--danger)',
+            }}
+            >
+              <XCircle size={18} strokeWidth={2.25} />
+              {formatStatusLabel('rejected')}
             </button>
           ) : (
             <>
@@ -351,7 +420,7 @@ export default function ProviderDetailPage() {
         </div>
       </div>
 
-      <Card style={{ marginBottom: 22 }}>
+      <Card style={{ marginBottom: 22, width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
           <Info size={20} color="var(--primary)" strokeWidth={2} />
           <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: 'var(--text-primary)' }}>Provider details</h2>
@@ -359,20 +428,22 @@ export default function ProviderDetailPage() {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-            gap: '20px 28px',
+            gridTemplateColumns: isMobile
+              ? 'repeat(auto-fit, minmax(min(100%, 200px), 1fr))'
+              : 'repeat(auto-fill, minmax(220px, 1fr))',
+            gap: isMobile ? '16px 20px' : '20px 28px',
+            width: '100%',
+            minWidth: 0,
+            maxWidth: '100%',
           }}
         >
           {[
             { label: 'Region', value: dash(provider.region) },
-            { label: 'Bank name', value: dash(provider.bankName) },
-            { label: 'Account number', value: dash(provider.accountNumber) },
             { label: 'Business name', value: dash(provider.businessName) },
             { label: 'First name', value: dash(provider.firstName) },
             { label: 'Last name', value: dash(provider.lastName) },
             { label: 'Email', value: dash(provider.email) },
             { label: 'Phone number', value: dash(ov.phone) },
-            { label: 'Religion', value: dash(provider.religion) },
             { label: 'Document type', value: dash(ov.documentType) },
             { label: 'Verification status', value: statusLabel },
             { label: 'Member since', value: dash(provider.createdAt) },
@@ -389,57 +460,192 @@ export default function ProviderDetailPage() {
         </div>
       </Card>
 
-      <Card style={{ marginBottom: 0 }}>
-        <h2 style={{ fontSize: 17, fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 6px' }}>
+      <Card style={{ marginBottom: 22, width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+          <Landmark size={20} color="var(--primary)" strokeWidth={2} />
+          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: 'var(--text-primary)' }}>Bank details</h2>
+        </div>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+            gap: '20px 28px',
+          }}
+        >
+          {[
+            { label: 'Bank name', value: dash(provider.bankName) },
+            { label: 'Account number', value: dash(provider.accountNumber) },
+          ].map((row) => (
+            <div key={row.label}>
+              <p style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 6px' }}>
+                {row.label}
+              </p>
+              <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: 0, lineHeight: 1.4 }}>
+                {row.value}
+              </p>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card style={{ marginBottom: 0, width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box' }}>
+        <h2
+          style={{
+            fontSize: 17,
+            fontWeight: 800,
+            color: 'var(--text-primary)',
+            margin: '0 0 6px',
+            maxWidth: '100%',
+            overflowWrap: 'break-word',
+            lineHeight: 1.3,
+          }}
+        >
           Document images (front and back side)
         </h2>
-        <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 24px', lineHeight: 1.5 }}>
+        <p
+          style={{
+            fontSize: 13,
+            color: 'var(--text-muted)',
+            margin: '0 0 24px',
+            lineHeight: 1.5,
+            maxWidth: '100%',
+            overflowWrap: 'break-word',
+          }}
+        >
           Submitted identity documents and selfie for organizer verification.
         </p>
 
-        <DocumentPairBlock title="Identity card" description="Primary identity card — front and back." pair={docs.identityCard} />
-        <DocumentPairBlock
-          title="Passport (if applicable)"
-          description="Upload of a valid passport — front (photo page) and back."
-          pair={docs.passport}
-        />
-        <DocumentPairBlock
-          title="Driving licence (if applicable)"
-          description="Upload of a valid driving licence — front and back."
-          pair={docs.drivingLicense}
-        />
-        <DocumentPairBlock
-          title="Identity card (if applicable)"
-          description="Upload of a valid national ID card — front and back."
-          pair={docs.nationalIdCard}
-        />
-
-        <div style={{ marginBottom: 0 }}>
-          <h3 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Verify selfie</h3>
-          <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '0 0 14px', lineHeight: 1.45 }}>
-            Live selfie to match the document photo.
+        {documentTiles.length === 0 ? (
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 28px', lineHeight: 1.5 }}>
+            No document images uploaded.
           </p>
+        ) : (
           <div
             style={{
-              maxWidth: 320,
-              borderRadius: 'var(--radius-md)',
-              overflow: 'hidden',
-              aspectRatio: '1',
-              background: 'var(--bg-input)',
-              border: '1px solid var(--border)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
+              display: 'grid',
+              gridTemplateColumns: isMobile
+                ? 'repeat(auto-fit, minmax(min(100%, 200px), 1fr))'
+                : 'repeat(auto-fill, minmax(305px, 1fr))',
+              gap: isMobile ? 12 : 14,
+              marginBottom: 28,
+              width: '100%',
+              minWidth: 0,
+              maxWidth: '100%',
             }}
           >
-            {docs.selfie ? (
-              <img src={docs.selfie} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-            ) : (
-              <span style={{ fontSize: 13, color: 'var(--text-placeholder)', fontWeight: 500 }}>No image</span>
-            )}
+            {documentTiles.map(({ key, url }) => (
+              <DocumentImageTile key={key} url={url} onPreview={setImagePreviewUrl} />
+            ))}
           </div>
+        )}
+
+        <div style={{ marginBottom: 0, width: '100%', maxWidth: '100%', minWidth: 0 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Verify selfie</h3>
+          <p
+            style={{
+              fontSize: 12.5,
+              color: 'var(--text-muted)',
+              margin: '0 0 14px',
+              lineHeight: 1.45,
+              maxWidth: '100%',
+              overflowWrap: 'break-word',
+            }}
+          >
+            Live selfie to match the document photo.
+          </p>
+          {docs.selfie ? (
+            <button
+              type="button"
+              onClick={() => setImagePreviewUrl(docs.selfie)}
+              aria-label="View selfie full size"
+              style={{
+                width: '100%',
+                maxWidth: 'min(320px, 100%)',
+                minWidth: 0,
+                margin: 0,
+                padding: 0,
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-md)',
+                overflow: 'hidden',
+                aspectRatio: '1',
+                background: 'var(--bg-input)',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                display: 'block',
+                boxSizing: 'border-box',
+              }}
+            >
+              <img src={docs.selfie} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+            </button>
+          ) : (
+            <div
+              style={{
+                width: '100%',
+                maxWidth: 'min(320px, 100%)',
+                minWidth: 0,
+                borderRadius: 'var(--radius-md)',
+                overflow: 'hidden',
+                aspectRatio: '1',
+                background: 'var(--bg-input)',
+                border: '1px solid var(--border)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxSizing: 'border-box',
+              }}
+            >
+              <span style={{ fontSize: 13, color: 'var(--text-placeholder)', fontWeight: 500 }}>No image</span>
+            </div>
+          )}
         </div>
       </Card>
+
+      <Modal
+        isOpen={!!imagePreviewUrl}
+        onClose={() => setImagePreviewUrl(null)}
+        title="Preview"
+        size="lg"
+        noPadding
+        compactHeader
+        scrollableBody={false}
+        fillHeight
+        panelMaxHeight="60vh"
+      >
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            minWidth: 0,
+            width: '100%',
+            padding: 28,
+            boxSizing: 'border-box',
+            background: 'var(--bg-card)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            overflow: 'hidden',
+          }}
+        >
+          {imagePreviewUrl ? (
+            <img
+              key={imagePreviewUrl}
+              src={imagePreviewUrl}
+              alt=""
+              style={{
+                minWidth: 0,
+                minHeight: 0,
+                maxWidth: 'min(100%, 480px)',
+                maxHeight: '100%',
+                width: 'auto',
+                height: 'auto',
+                objectFit: 'contain',
+                objectPosition: 'center',
+                display: 'block',
+              }}
+            />
+          ) : null}
+        </div>
+      </Modal>
 
       <ConfirmModal
         isOpen={!!confirm}

@@ -15,7 +15,7 @@ const MOCK = Array.from({ length: 22 }, (_, i) => ({
   userId: String(i+100),
   userName: ['Amara Osei','Fatima Ali','Kwame Mensah','Zara Diallo','Emeka Uba','Nkechi Obi','Bolu Adeyemi','Tunde James'][i%8],
   ticketType: ['VIP','Standard','Early Bird'][i%3],
-  status: ['confirmed','confirmed','cancelled','refunded','confirmed','pending','confirmed','confirmed','cancelled','confirmed','confirmed','confirmed','refunded','confirmed','confirmed','pending','confirmed','confirmed','confirmed','cancelled','confirmed','confirmed'][i],
+  status: ['confirmed','completed','confirmed','refunded','confirmed','pending','completed','confirmed','confirmed','confirmed','confirmed','confirmed','refunded','confirmed','completed','pending','confirmed','confirmed','confirmed','confirmed','confirmed','confirmed'][i],
   amount: 3000 + (i%5)*2000,
   purchasedAt: `2026-03-${String(1+(i%27)).padStart(2,'0')}`,
   eventDate:   `2026-04-${String(1+(i%28)).padStart(2,'0')}`,
@@ -23,7 +23,8 @@ const MOCK = Array.from({ length: 22 }, (_, i) => ({
 
 const STATUS_OPTIONS = [
   { label:'All Status',  value:'' }, { label:'Confirmed', value:'confirmed' },
-  { label:'Pending',     value:'pending' }, { label:'Cancelled', value:'cancelled' },
+  { label:'Completed',   value:'completed' },
+  { label:'Pending',     value:'pending' },
   { label:'Refunded',    value:'refunded' },
 ];
 
@@ -66,7 +67,7 @@ export default function TicketsPage() {
   const columns = [
     {
       key:'userName', label:'Explorer',
-      render:(_,row) => <div><p style={{ fontWeight:500, fontSize:13.5 }}>{row.userName}</p><p style={{ fontSize:11, color:'var(--text-muted)' }}>ID #{row.userId}</p></div>,
+      render: (_, row) => <span style={{ fontWeight: 500, fontSize: 13.5 }}>{row.userName}</span>,
     },
     { key:'eventTitle', label:'Experience', render:(v) => <span style={{ fontSize:13, fontWeight:500 }}>{v}</span> },
     { key:'ticketType', label:'Type', render:(v) => <Badge color={v==='VIP'?'primary':'neutral'} style={{ fontWeight:500 }}>{v}</Badge> },

@@ -46,7 +46,7 @@
   --info-bg: rgba(0, 207, 232, 0.12);
 
   /* Layout */
-  --sidebar-width: 220px;
+  --sidebar-width: 218px;
   --topbar-height: 64px;
 
   /* Shadows */
@@ -81,6 +81,18 @@ body {
   color: var(--text-primary);
   line-height: 1.5;
   min-height: 100vh;
+}
+
+/* Avoid horizontal page scroll on narrow viewports (flex/content min-width quirks). */
+@media (max-width: 1023px) {
+  html {
+    overflow-x: hidden;
+  }
+}
+
+#root {
+  min-width: 0;
+  width: 100%;
 }
 
 a { color: inherit; text-decoration: none; }
@@ -171,22 +183,16 @@ ul, ol { list-style: none; }
   flex-shrink: 1;
 }
 
-/* Settings: sidebar sits beside the form card (cluster centered; card keeps margin auto) */
+/* Settings: sidebar ~36%, main ~64%; min widths so both feel wider on large screens */
 .settings-body-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 520px) minmax(0, 1fr);
-  gap: 38px;
+  grid-template-columns: minmax(300px, 36fr) minmax(0, 64fr);
+  gap: 20px;
   align-items: start;
-}
-.settings-body-grid-spacer {
-  min-height: 0;
 }
 @media (max-width: 900px) {
   .settings-body-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .settings-body-grid-spacer {
-    display: none;
+    grid-template-columns: 1fr;
   }
 }
 
