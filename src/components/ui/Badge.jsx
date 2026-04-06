@@ -58,13 +58,15 @@ export const Badge = ({
 
 export function statusColor(status) {
   const s = status?.toLowerCase();
-  if (['active', 'confirmed', 'verified', 'success', 'visible', 'approved'].includes(s)) return 'success';
+  if (['active', 'confirmed', 'verified', 'success', 'visible', 'approved', 'released', 'paid', 'used'].includes(s)) {
+    return 'success';
+  }
   if (['completed'].includes(s)) return 'neutral';
   if (['draft'].includes(s)) return 'primary';
-  if (['pending', 'paused'].includes(s)) return 'warning';
+  if (['pending', 'paused', 'scheduled', 'transfer_pending', 'expired'].includes(s)) return 'warning';
   if (['cancelled', 'canceled'].includes(s)) return 'cancelled';
   if (['failed', 'rejected', 'deleted', 'suspended', 'hidden', 'flagged'].includes(s)) return 'danger';
-  if (['refunded'].includes(s)) return 'info';
+  if (['refunded', 'partial_refund'].includes(s)) return 'info';
   return 'neutral';
 }
 

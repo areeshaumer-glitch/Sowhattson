@@ -43,12 +43,14 @@ export const api = {
   markAllAdminNotificationsRead: 'admin/notifications/read-all',
 
   // ── ADMIN EVENTS ──────────────────────────────────────────
-  getAdminEvents: (page = 1, limit = 20, search = '', status = '') => {
+  /** GET /admin/events — status: all | active | cancelled | completed; search: name, provider names */
+  getAdminEvents: (page = 1, limit = 20, search = '', status = 'all') => {
     const p = new URLSearchParams();
     p.append('page', String(page));
     p.append('limit', String(limit));
-    if (search) p.append('search', search);
-    if (status) p.append('status', status);
+    const st = String(status ?? '').trim() || 'all';
+    p.append('status', st);
+    if (String(search ?? '').trim()) p.append('search', String(search).trim());
     return `admin/events?${p.toString()}`;
   },
   getAdminEventById:    (id) => `admin/events/${id}`,
@@ -58,13 +60,16 @@ export const api = {
   deleteAdminEvent:     (id) => `admin/events/${id}`,
 
   // ── ADMIN TICKETS ─────────────────────────────────────────
-  getAdminTickets: (page = 1, limit = 20, search = '', status = '') => {
+  /** GET /tickets/admin/all — page, limit, status, search (optional; ignored if unsupported) */
+  getAdminTickets: (page = 1, limit = 10, status = '', search = '') => {
     const p = new URLSearchParams();
-    p.append('page', String(page));
-    p.append('limit', String(limit));
-    if (search) p.append('search', search);
-    if (status) p.append('status', status);
-    return `admin/tickets?${p.toString()}`;
+    p.set('page', String(page));
+    p.set('limit', String(limit));
+    const s = String(status ?? '').trim();
+    if (s) p.set('status', s);
+    const q = String(search ?? '').trim();
+    if (q) p.set('search', q);
+    return `tickets/admin/all?${p.toString()}`;
   },
   cancelAdminTicket:    (id) => `admin/tickets/${id}/cancel`,
   refundAdminTicket:    (id) => `admin/tickets/${id}/refund`,
@@ -95,17 +100,16 @@ export const api = {
   activateAdminUser:    (id) => `admin/users/${id}/activate`,
   deleteAdminUser:      (id) => `admin/users/${id}`,
 
-  // ── ADMIN TAGS ────────────────────────────────────────────
-  getAdminTags: (page = 1, limit = 20, search = '') => {
+  // ── CATEGORIES (event categories) ──────────────────────────
+  /** GET /categories — includeInactive true|false (default false) */
+  getCategories: (includeInactive = false) => {
     const p = new URLSearchParams();
-    p.append('page', String(page));
-    p.append('limit', String(limit));
-    if (search) p.append('search', search);
-    return `admin/tags?${p.toString()}`;
+    p.set('includeInactive', includeInactive ? 'true' : 'false');
+    return `categories?${p.toString()}`;
   },
-  createAdminTag:       'admin/tags',
-  updateAdminTag:       (id) => `admin/tags/${id}`,
-  deleteAdminTag:       (id) => `admin/tags/${id}`,
+  createCategory:   'categories',
+  updateCategory:   (categoryId) => `categories/${categoryId}`,
+  deleteCategory:   (categoryId) => `categories/${categoryId}`,
 
   // ── ADMIN COUPONS ─────────────────────────────────────────
   getAdminCoupons: (opts = {}) => {
@@ -132,27 +136,55 @@ export const api = {
   updateAdminVibe:      (id) => `admin/vibes/${id}`,
   deleteAdminVibe:      (id) => `admin/vibes/${id}`,
 
-  // ── ADMIN REVIEWS ─────────────────────────────────────────
-  getAdminReviews: (page = 1, limit = 20, search = '', status = '') => {
+  // ── ADMIN PAYMENT REVIEWS ─────────────────────────────────
+  /** GET /payment-reviews (admin only) — page, limit, sortBy, sortOrder (1 | -1), optional rating, optional search */
+  getAdminPaymentReviews: ({
+    page = 1,
+    limit = 20,
+    sortBy = 'createdAt',
+    sortOrder = -1,
+    rating,
+    search = '',
+  } = {}) => {
     const p = new URLSearchParams();
-    p.append('page', String(page));
-    p.append('limit', String(limit));
-    if (search) p.append('search', search);
-    if (status) p.append('status', status);
-    return `admin/reviews?${p.toString()}`;
+    p.set('page', String(page));
+    p.set('limit', String(limit));
+    p.set('sortBy', sortBy);
+    p.set('sortOrder', String(sortOrder));
+    const r = rating != null && String(rating).trim() !== '';
+    if (r && !Number.isNaN(Number(rating))) p.set('rating', String(Number(rating)));
+    const q = String(search ?? '').trim();
+    if (q) p.set('search', q);
+    return `payment-reviews?${p.toString()}`;
   },
+
+  // ── ADMIN REVIEWS (mutations if still used) ────────────────
   updateAdminReview:    (id) => `admin/reviews/${id}`,
   deleteAdminReview:    (id) => `admin/reviews/${id}`,
 
-  // ── ADMIN PAYMENTS ────────────────────────────────────────
-  getAdminPayments: (page = 1, limit = 20, search = '', status = '') => {
+  // ── PAYOUTS ────────────────────────────────────────────────
+  /**
+   * GET /payouts — page, limit, status, providerName
+   * Explorer/experience text search is handled client-side (payouts list API does not match Paystack customer names).
+   */
+  getPayouts: ({
+    page = 1,
+    limit = 20,
+    status = 'all',
+    providerName = '',
+  } = {}) => {
     const p = new URLSearchParams();
-    p.append('page', String(page));
-    p.append('limit', String(limit));
-    if (search) p.append('search', search);
-    if (status) p.append('status', status);
-    return `admin/payments?${p.toString()}`;
+    p.set('page', String(page));
+    p.set('limit', String(limit));
+    p.set('status', status && String(status).trim() ? String(status).trim() : 'all');
+    const prov = String(providerName ?? '').trim();
+    if (prov) p.set('providerName', prov);
+    return `payouts?${p.toString()}`;
   },
+  /** POST /admin/payouts/{payoutId}/retry — retry failed payout (admin; Paystack transfer) */
+  retryPayout: (payoutId) => `admin/payouts/${payoutId}/retry`,
+
+  // ── ADMIN PAYMENTS (legacy / other actions) ─────────────
   refundAdminPayment:   (id) => `admin/payments/${id}/refund`,
   updateAdminPayment:   (id) => `admin/payments/${id}`,
 };

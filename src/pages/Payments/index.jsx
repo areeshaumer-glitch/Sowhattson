@@ -1,304 +1,557 @@
-import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
-import { createPortal } from 'react-dom';
-import { ChevronDown, CheckCircle, Clock, XCircle, Undo2 } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { CheckCircle, Clock, XCircle, Undo2, RefreshCw } from 'lucide-react';
 import { callApi, Method } from '../../network/NetworkManager';
 import { api } from '../../network/Environment';
 import { SearchBar } from '../../components/ui/SearchBar';
 import { Select } from '../../components/ui/Select';
 import { DataTable } from '../../components/ui/DataTable';
-import { StatusBadge, statusColor } from '../../components/ui/Badge';
+import { StatusBadge } from '../../components/ui/Badge';
 import { Pagination } from '../../components/ui/Pagination';
 import { useDebounce } from '../../hooks/useDebounce';
 import { ListPageToolbar } from '../../components/ui/PageHeader';
-import { formatPaymentStatusLabel } from '../../utils/formatStatusLabel';
+import { ConfirmModal } from '../../components/ui/Modal';
+import { formatStatusLabel } from '../../utils/formatStatusLabel';
+import { formatNameForCell } from '../../utils/formatNameForCell';
+import { getApiErrorMessage } from '../../utils/apiErrorMessage';
+import { notifyError, notifySuccess } from '../../utils/notify';
 
-const MOCK = Array.from({ length:30 }, (_,i) => ({
-  id:String(i+1), reference:`PSK-2026-${String(i+1).padStart(4,'0')}`,
-  amount:(1+(i%8))*5000, currency:'NGN',
-  status:['success','success','pending','success','failed','success','refunded','success','success','success'][i%10],
-  user:{ id:String(i+1), name:['Amara Osei','Fatima Ali','Kwame Mensah','Zara Diallo','Emeka Uba'][i%5], email:`user${i}@example.com` },
-  event:{ id:String(i+1), title:['Afrobeats Night','Jazz & Wine','Tech Summit','Comedy Fiesta','Food Festival'][i%5] },
-  provider:{ id:String(i+1), name:['TxEvents','LuxEvents','PrimeShow','TechHub','GastroPro'][i%5] },
-  paidAt:`2026-03-${String(1+(i%27)).padStart(2,'0')}`,
-  createdAt:`2026-03-${String(1+(i%27)).padStart(2,'0')}`,
-}));
+const LIMIT = 20;
+/** When searching explorer/experience client-side, fetch enough rows to filter (API may not filter by Paystack customer). */
+const CLIENT_SEARCH_FETCH_LIMIT = 500;
 
+function payoutRowMatchesQuery(row, qLower) {
+  if (!qLower) return true;
+  const hay = [
+    row.user?.name,
+    row.user?.email,
+    row.explorerDetail,
+    row.event?.title,
+    row.provider?.name,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return hay.includes(qLower);
+}
+
+/** Filter values sent to GET /payouts?status= — keep aligned with what the API supports. */
 const STATUS_OPTIONS = [
-  { label:'All Status', value:'' }, { label:'Success', value:'success' },
-  { label:'In Progress', value:'pending' }, { label:'Failed',  value:'failed' },
-  { label:'Refunded',   value:'refunded' },
+  { label: 'All Status', value: 'all' },
+  { label: 'Pending', value: 'pending' },
+  { label: 'Released', value: 'released' },
+  { label: 'Failed', value: 'failed' },
 ];
 
-const PAYMENT_STATUS_VALUES = ['success', 'pending', 'failed', 'refunded'];
+const iconProps = { size: 12, strokeWidth: 2.5 };
 
-const paymentStatusIconProps = { size: 12, strokeWidth: 2.5 };
-const menuIconProps = { size: 14, strokeWidth: 2.25 };
-
-function paymentStatusIcon(status) {
+function payoutStatusIcon(status) {
   const s = String(status ?? '').toLowerCase();
-  if (s === 'success') return <CheckCircle {...paymentStatusIconProps} aria-hidden />;
-  if (s === 'pending') return <Clock {...paymentStatusIconProps} aria-hidden />;
-  if (s === 'failed') return <XCircle {...paymentStatusIconProps} aria-hidden />;
-  if (s === 'refunded') return <Undo2 {...paymentStatusIconProps} aria-hidden />;
+  if (s === 'released') return <CheckCircle {...iconProps} aria-hidden />;
+  if (['pending', 'scheduled', 'transfer_pending'].includes(s)) {
+    return <Clock {...iconProps} aria-hidden />;
+  }
+  if (s === 'failed') return <XCircle {...iconProps} aria-hidden />;
+  if (['refunded', 'partial_refund'].includes(s)) return <Undo2 {...iconProps} aria-hidden />;
+  if (s === 'cancelled' || s === 'canceled') return <XCircle {...iconProps} aria-hidden />;
   return undefined;
 }
 
-function menuStatusIcon(status) {
-  const s = String(status ?? '').toLowerCase();
-  if (s === 'success') return <CheckCircle {...menuIconProps} aria-hidden />;
-  if (s === 'pending') return <Clock {...menuIconProps} aria-hidden />;
-  if (s === 'failed') return <XCircle {...menuIconProps} aria-hidden />;
-  if (s === 'refunded') return <Undo2 {...menuIconProps} aria-hidden />;
+function formatPayoutDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return d.toLocaleDateString(undefined, { dateStyle: 'medium' });
+}
+
+function personName(obj) {
+  if (!obj || typeof obj !== 'object') return '';
+  if (obj.name) return String(obj.name).trim();
+  const parts = [obj.firstName, obj.lastName].filter(Boolean);
+  if (parts.length) return parts.join(' ').trim();
+  return '';
+}
+
+/** Prefer charge/verify payloads for amount + customer; else first webhook with positive amount. */
+function pickBestTransactionPayload(webhookEvents) {
+  if (!Array.isArray(webhookEvents) || webhookEvents.length === 0) return null;
+  const prefer = ['charge.success', 'transaction.verify'];
+  for (const ev of prefer) {
+    const hit = webhookEvents.find(
+      (w) =>
+        w?.event === ev &&
+        w?.payload &&
+        typeof w.payload === 'object' &&
+        typeof w.payload.amount === 'number' &&
+        w.payload.amount > 0,
+    );
+    if (hit?.payload) return hit.payload;
+  }
+  for (const w of webhookEvents) {
+    const p = w?.payload;
+    if (p && typeof p === 'object' && typeof p.amount === 'number' && p.amount > 0) return p;
+  }
   return null;
 }
 
-const colorMapStyles = {
-  success: { bg: 'var(--success-bg)', fg: 'var(--success)' },
-  warning: { bg: 'var(--warning-bg)', fg: 'var(--warning)' },
-  danger:  { bg: 'var(--danger-bg)',  fg: 'var(--danger)' },
-  info:    { bg: 'var(--info-bg)',    fg: 'var(--info)' },
-  neutral: { bg: 'rgba(108,108,112,0.12)', fg: 'var(--text-secondary)' },
-  primary: { bg: 'var(--primary-light)', fg: 'var(--primary)' },
-  cancelled: { bg: 'rgba(117, 79, 128, 0.16)', fg: '#6E4578' },
-};
+function firstBookingReference(webhookEvents) {
+  if (!Array.isArray(webhookEvents)) return '';
+  for (const w of webhookEvents) {
+    const br = w?.payload?.metadata?.bookingReference;
+    if (typeof br === 'string' && br.trim()) return br.trim();
+  }
+  return '';
+}
 
-function PaymentStatusMenu({ row, onStatusChange }) {
-  const [open, setOpen] = useState(false);
-  const [coords, setCoords] = useState({ top: 0, left: 0 });
-  const btnRef = useRef(null);
-  const menuRef = useRef(null);
+function customerFromPayload(payload) {
+  const c = payload?.customer;
+  if (!c || typeof c !== 'object') return { name: '—', email: '' };
+  const email = String(c.email ?? '').trim();
+  const name =
+    [c.first_name ?? c.firstName, c.last_name ?? c.lastName].filter(Boolean).join(' ').trim() ||
+    email ||
+    '—';
+  return { name, email };
+}
 
-  const close = useCallback(() => setOpen(false), []);
+function payoutFailureHint(row) {
+  const tr = row?.transferResponse;
+  if (!tr || typeof tr !== 'object') return '';
+  const msg = String(tr.message ?? '').trim();
+  const meta = tr.meta && typeof tr.meta === 'object' ? tr.meta : null;
+  const next = meta ? String(meta.nextStep ?? '').trim() : '';
+  return [msg, next].filter(Boolean).join(' ');
+}
 
-  useLayoutEffect(() => {
-    if (!open) return;
-    const place = () => {
-      const el = btnRef.current;
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      const menuW = 208;
-      const left = Math.max(8, Math.min(r.left, window.innerWidth - menuW - 8));
-      setCoords({ top: r.bottom + 6, left });
-    };
-    place();
-    window.addEventListener('scroll', place, true);
-    window.addEventListener('resize', place);
-    return () => {
-      window.removeEventListener('scroll', place, true);
-      window.removeEventListener('resize', place);
-    };
-  }, [open]);
+/** Estimate charge in minor units from event ticket list when webhooks are empty (price is major). */
+function amountMinorFromEventTickets(ev) {
+  if (!ev || !Array.isArray(ev.tickets)) return NaN;
+  const prices = ev.tickets
+    .map((t) => (t && typeof t.price === 'number' ? t.price : NaN))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (!prices.length) return NaN;
+  return Math.round(Math.min(...prices) * 100);
+}
 
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e) => {
-      if (menuRef.current?.contains(e.target) || btnRef.current?.contains(e.target)) return;
-      close();
-    };
-    const onKey = (e) => { if (e.key === 'Escape') close(); };
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDoc);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open, close]);
-
-  const toggle = (e) => {
-    e.stopPropagation();
-    setOpen((o) => !o);
+function resolvePayoutAmountMinor(row, txPayload) {
+  const tryNum = (...vals) => {
+    for (const v of vals) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    return NaN;
   };
 
-  const pick = (e, value) => {
-    e.stopPropagation();
-    close();
-    if (value !== row.status) onStatusChange(row, value);
-  };
-
-  const current = String(row.status ?? '').toLowerCase();
-
-  return (
-    <div style={{ position: 'relative', display: 'inline-flex' }}>
-      <button
-        ref={btnRef}
-        type="button"
-        title="Change payout status"
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        onClick={toggle}
-        style={{
-          width: 32,
-          height: 28,
-          borderRadius: 'var(--radius-sm)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 2,
-          background: 'var(--primary-light)',
-          border: '1px solid var(--border)',
-          cursor: 'pointer',
-          color: 'var(--primary)',
-        }}
-      >
-        <ChevronDown size={14} strokeWidth={2.25} style={{ opacity: 0.9 }} />
-      </button>
-      {open && createPortal(
-        <div
-          ref={menuRef}
-          role="listbox"
-          aria-label="Payout status"
-          style={{
-            position: 'fixed',
-            top: coords.top,
-            left: coords.left,
-            zIndex: 10000,
-            minWidth: 200,
-            maxWidth: 280,
-            background: 'var(--bg-card)',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius-md)',
-            boxShadow: 'var(--shadow-md)',
-            padding: 6,
-          }}
-        >
-          {PAYMENT_STATUS_VALUES.map((value) => {
-            const active = current === value;
-            const c = statusColor(value);
-            const { bg, fg } = colorMapStyles[c] || colorMapStyles.neutral;
-            return (
-              <button
-                key={value}
-                type="button"
-                role="option"
-                aria-selected={active}
-                onClick={(e) => pick(e, value)}
-                style={{
-                  display: 'flex',
-                  width: '100%',
-                  alignItems: 'center',
-                  gap: 10,
-                  padding: '10px 12px',
-                  marginBottom: 2,
-                  border: 'none',
-                  borderRadius: 'var(--radius-sm)',
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                  fontSize: 13,
-                  fontWeight: active ? 600 : 500,
-                  textAlign: 'left',
-                  background: active ? bg : 'transparent',
-                  color: active ? fg : 'var(--text-primary)',
-                  transition: 'background 0.12s',
-                }}
-                onMouseEnter={(e) => {
-                  if (!active) e.currentTarget.style.background = 'var(--bg-card-hover)';
-                }}
-                onMouseLeave={(e) => {
-                  if (!active) e.currentTarget.style.background = 'transparent';
-                }}
-              >
-                <span style={{ display: 'flex', color: active ? fg : 'var(--text-secondary)' }}>{menuStatusIcon(value)}</span>
-                <span style={{ flex: 1 }}>{formatPaymentStatusLabel(value)}</span>
-                {active && <span style={{ fontSize: 11, color: fg, fontWeight: 600 }}>Current</span>}
-              </button>
-            );
-          })}
-        </div>,
-        document.body,
-      )}
-    </div>
+  let minor = tryNum(
+    row.amount,
+    row.payoutAmount,
+    row.totalAmount,
+    row.netAmount,
+    row.chargedAmount,
+    row.transactionAmount,
   );
+
+  if (!Number.isFinite(minor) || minor <= 0) {
+    const m = tryNum(row.amountMajor, row.payoutAmountMajor, row.payoutMajor);
+    if (Number.isFinite(m) && m > 0) minor = Math.round(m * 100);
+  }
+
+  if ((!Number.isFinite(minor) || minor <= 0) && txPayload && typeof txPayload.amount === 'number') {
+    minor = txPayload.amount;
+  }
+
+  if (!Number.isFinite(minor) || minor <= 0) {
+    minor = tryNum(
+      ...(Array.isArray(row.webhookEvents)
+        ? row.webhookEvents.map((w) => w?.payload?.amount)
+        : []),
+    );
+  }
+
+  if (!Number.isFinite(minor) || minor <= 0) {
+    const fromTickets = amountMinorFromEventTickets(row.event);
+    if (Number.isFinite(fromTickets) && fromTickets > 0) minor = fromTickets;
+  }
+
+  return minor;
+}
+
+function formatMinorAmount(minorUnits, currency) {
+  const major = (Number(minorUnits) || 0) / 100;
+  const c = String(currency || 'GHS').toUpperCase();
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency: c }).format(major);
+  } catch {
+    return `${major.toLocaleString()} ${c}`;
+  }
+}
+
+function organiserDisplayName(organiser) {
+  if (!organiser || typeof organiser !== 'object') return '—';
+  const p = organiser.profile;
+  if (p && typeof p === 'object') {
+    const fromProfile =
+      String(p.businessName ?? '').trim() ||
+      personName(p) ||
+      String(p.username ?? '').trim();
+    if (fromProfile) return fromProfile;
+  }
+  return String(organiser.email ?? '').trim() || '—';
+}
+
+/** Map GET /payouts row: payouts[], event, organiser, webhookEvents, transferResponse, … */
+function normalizePayout(row) {
+  if (!row || typeof row !== 'object') return null;
+  const id = String(row._id ?? row.id ?? '');
+  if (!id) return null;
+
+  const ev = row.event;
+  const prov = row.organiser ?? row.organizer ?? row.provider;
+  const user = row.user ?? row.explorer ?? row.buyer ?? row.customer;
+
+  let eventTitle = '';
+  if (ev && typeof ev === 'object') eventTitle = String(ev.name ?? ev.title ?? '').trim();
+  else if (typeof row.eventName === 'string') eventTitle = row.eventName.trim();
+
+  const providerName = organiserDisplayName(prov);
+
+  const tx = pickBestTransactionPayload(row.webhookEvents);
+  const fromWebhook = tx ? customerFromPayload(tx) : { name: '—', email: '' };
+  let userName =
+    user && typeof user === 'object' ? personName(user) || fromWebhook.name : fromWebhook.name;
+  let userEmail =
+    user && typeof user === 'object'
+      ? String(user.email ?? '').trim() || fromWebhook.email
+      : fromWebhook.email;
+
+  if ((!userName || userName === '—') && fromWebhook.name && fromWebhook.name !== '—') {
+    userName = fromWebhook.name;
+  }
+
+  const bookingRef = firstBookingReference(row.webhookEvents);
+  const paystackRef = String(row.paystackReference ?? '').trim();
+  const firstPayRef =
+    Array.isArray(row.paymentReferences) && row.paymentReferences.length
+      ? String(row.paymentReferences[0]).trim()
+      : '';
+
+  const explorerDetail =
+    userEmail ||
+    (bookingRef ? `Booking: ${bookingRef}` : '') ||
+    (paystackRef ? `Ref: ${paystackRef}` : '') ||
+    (firstPayRef ? `Ref: ${firstPayRef}` : '');
+
+  const amountMinor = resolvePayoutAmountMinor(row, tx);
+  let currency = String(row.currency ?? row.paystackRecipientCurrency ?? '').trim();
+  if (tx && !currency) currency = String(tx.currency ?? '').trim();
+  if (!currency && ev?.tickets?.length) {
+    const t0 = ev.tickets.find((t) => t && String(t.currency ?? '').trim());
+    if (t0) currency = String(t0.currency).trim();
+  }
+  if (!currency) currency = 'GHS';
+
+  const amountLabel =
+    Number.isFinite(amountMinor) && amountMinor > 0
+      ? formatMinorAmount(amountMinor, currency)
+      : '—';
+
+  const status = String(row.status ?? '').toLowerCase() || 'pending';
+  const paidAt =
+    row.paidAt ??
+    row.payoutDate ??
+    row.releasedAt ??
+    row.transferDate ??
+    row.lastPayoutAttemptAt ??
+    row.createdAt ??
+    row.updatedAt;
+
+  const failureHint = payoutFailureHint(row);
+
+  return {
+    id,
+    amountLabel,
+    currency,
+    status,
+    user: { name: userName || '—', email: userEmail },
+    explorerDetail,
+    event: { title: eventTitle || '—' },
+    provider: { name: providerName || '—' },
+    paidAt: formatPayoutDate(paidAt),
+    failureHint,
+  };
 }
 
 export default function PaymentsPage() {
-  const [search, setSearch]             = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [page, setPage]                 = useState(1);
-  const [payments, setPayments]         = useState([]);
-  const [total, setTotal]               = useState(0);
-  const [loading, setLoading]           = useState(true);
-  const debouncedSearch                 = useDebounce(search, 350);
-  const LIMIT = 10;
+  const [payoutSearch, setPayoutSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const [payments, setPayments] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [repayLoadingId, setRepayLoadingId] = useState(null);
+  const [repayConfirmRow, setRepayConfirmRow] = useState(null);
 
-  const fetchPayments = useCallback(() => {
+  const debouncedPayoutSearch = useDebounce(payoutSearch, 350);
+  const hasSearchQuery = debouncedPayoutSearch.trim().length > 0;
+  const requestPage = hasSearchQuery ? 1 : page;
+  const requestLimit = hasSearchQuery ? CLIENT_SEARCH_FETCH_LIMIT : LIMIT;
+
+  const loadPayouts = useCallback(() => {
     setLoading(true);
     callApi({
       method: Method.GET,
-      endPoint: api.getAdminPayments(page, LIMIT, debouncedSearch, statusFilter),
+      endPoint: api.getPayouts({
+        page: requestPage,
+        limit: requestLimit,
+        status: statusFilter,
+      }),
       onSuccess(response) {
-        setPayments(response.data ?? response.payments ?? []);
-        setTotal(response.total ?? 0);
+        const raw = response.payouts ?? response.data ?? response.results ?? [];
+        const rows = (Array.isArray(raw) ? raw : []).map(normalizePayout).filter(Boolean);
+        setPayments(rows);
+        const t = Number(response.total ?? response.count ?? response.totalCount);
+        setTotal(Number.isFinite(t) && t >= 0 ? t : rows.length);
+        const tp = Number(response.totalPages);
+        if (Number.isFinite(tp) && tp >= 1) setTotalPages(tp);
+        else {
+          const tot = Number.isFinite(t) && t >= 0 ? t : rows.length;
+          setTotalPages(Math.max(1, Math.ceil(tot / LIMIT)));
+        }
         setLoading(false);
       },
-      onError() {
-        const filtered = MOCK.filter((p) =>
-          (p.user.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-           p.reference.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-           p.event.title.toLowerCase().includes(debouncedSearch.toLowerCase())) &&
-          (statusFilter==='' || p.status===statusFilter),
-        );
-        setPayments(filtered.slice((page-1)*LIMIT, page*LIMIT));
-        setTotal(filtered.length);
+      onError(err) {
+        setPayments([]);
+        setTotal(0);
+        setTotalPages(1);
         setLoading(false);
+        notifyError(getApiErrorMessage(err));
       },
     });
-  }, [page, debouncedSearch, statusFilter]);
+  }, [requestPage, requestLimit, statusFilter]);
 
-  useEffect(() => { fetchPayments(); }, [fetchPayments]);
-  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter]);
+  useEffect(() => {
+    loadPayouts();
+  }, [loadPayouts]);
 
-  const handleStatusChange = useCallback((row, status) => {
+  const queryLower = debouncedPayoutSearch.trim().toLowerCase();
+
+  const filteredPayments = useMemo(() => {
+    if (!queryLower) return payments;
+    return payments.filter((row) => payoutRowMatchesQuery(row, queryLower));
+  }, [payments, queryLower]);
+
+  const displayPayments = useMemo(() => {
+    if (!queryLower) return payments;
+    const start = (page - 1) * LIMIT;
+    return filteredPayments.slice(start, start + LIMIT);
+  }, [payments, filteredPayments, queryLower, page]);
+
+  const displayTotal = queryLower ? filteredPayments.length : total;
+  const displayTotalPages = queryLower
+    ? Math.max(1, Math.ceil(filteredPayments.length / LIMIT))
+    : totalPages;
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedPayoutSearch, statusFilter]);
+
+  const openRepaymentConfirm = (row) => {
+    if (row.status !== 'failed' || repayLoadingId) return;
+    setRepayConfirmRow(row);
+  };
+
+  const closeRepaymentModal = () => {
+    if (repayLoadingId) return;
+    setRepayConfirmRow(null);
+  };
+
+  const executeRepayment = () => {
+    const row = repayConfirmRow;
+    if (!row || row.status !== 'failed' || repayLoadingId) return;
+    setRepayLoadingId(row.id);
     callApi({
-      method: Method.PATCH,
-      endPoint: api.updateAdminPayment(row.id),
-      bodyParams: { status },
-      onSuccess() {
-        setPayments((prev) => prev.map((p) => (p.id === row.id ? { ...p, status } : p)));
+      method: Method.POST,
+      endPoint: api.retryPayout(row.id),
+      bodyParams: {},
+      onSuccess(response) {
+        setRepayLoadingId(null);
+        setRepayConfirmRow(null);
+        const msg =
+          typeof response?.message === 'string' && response.message.trim()
+            ? response.message.trim()
+            : 'Repayment request sent.';
+        notifySuccess(msg);
+        loadPayouts();
       },
-      onError() {
-        setPayments((prev) => prev.map((p) => (p.id === row.id ? { ...p, status } : p)));
+      onError(err) {
+        setRepayLoadingId(null);
+        setRepayConfirmRow(null);
+        notifyError(getApiErrorMessage(err));
       },
     });
-  }, []);
+  };
 
   const columns = [
     {
-      key:'user', label:'Explorer',
-      render:(_,row) => <div><p style={{ fontSize:13, fontWeight:500 }}>{row.user.name}</p><p style={{ fontSize:11, color:'var(--text-muted)' }}>{row.user.email}</p></div>,
+      key: 'user',
+      label: 'Explorer',
+      wrap: true,
+      render: (_, row) => {
+        const nameFmt = formatNameForCell(row.user.name);
+        const detail = String(row.explorerDetail ?? '').trim();
+        const detailFmt = detail ? formatNameForCell(detail) : null;
+        return (
+          <div>
+            <p style={{ fontSize: 13, fontWeight: 500 }} title={nameFmt.title}>
+              {nameFmt.text}
+            </p>
+            {detailFmt ? (
+              <p style={{ fontSize: 11, color: 'var(--text-muted)' }} title={detailFmt.title}>
+                {detailFmt.text}
+              </p>
+            ) : null}
+          </div>
+        );
+      },
     },
-    { key:'event',    label:'Experience',    render:(_,row) => <span style={{ fontSize:12.5, fontWeight:500 }}>{row.event.title}</span> },
-    { key:'provider', label:'Provider', render:(_,row) => <span style={{ fontSize:12.5, color:'var(--text-muted)' }}>{row.provider.name}</span> },
     {
-      key:'amount', label:'Amount',
-      render:(v,row) => (
-        <span style={{ color:'var(--primary)', fontSize:13, fontWeight:500 }}>
-          ₦{v.toLocaleString()}{' '}
-          <span style={{ fontSize:10.5, fontWeight:400, color:'var(--text-muted)' }}>{row.currency}</span>
+      key: 'event',
+      label: 'Experience',
+      render: (_, row) => {
+        const f = formatNameForCell(row.event.title);
+        return (
+          <span style={{ fontSize: 12.5, fontWeight: 500 }} title={f.title}>
+            {f.text}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'provider',
+      label: 'Provider',
+      render: (_, row) => {
+        const f = formatNameForCell(row.provider.name);
+        return (
+          <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }} title={f.title}>
+            {f.text}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'amountLabel',
+      label: 'Amount',
+      render: (v) => (
+        <span style={{ color: 'var(--primary)', fontSize: 13, fontWeight: 500 }}>{v}</span>
+      ),
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      render: (v, row) => (
+        <span
+          title={row.status === 'failed' && row.failureHint ? row.failureHint : undefined}
+          style={{ display: 'inline-flex' }}
+        >
+          <StatusBadge status={v} icon={payoutStatusIcon(v)} formatLabel={formatStatusLabel} />
         </span>
       ),
     },
     {
-      key:'status',
-      label:'Status',
-      render:(v) => <StatusBadge status={v} icon={paymentStatusIcon(v)} formatLabel={formatPaymentStatusLabel} />,
+      key: 'paidAt',
+      label: 'Date',
+      render: (v) => <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{v || '—'}</span>,
     },
-    { key:'paidAt', label:'Date', render:(v) => <span style={{ fontSize:12, color:'var(--text-muted)' }}>{v||'—'}</span> },
-    // {
-    //   key:'actions', label:'Action', align:'center', width:'88px',
-    //   render:(_,row) => (
-    //     <PaymentStatusMenu row={row} onStatusChange={handleStatusChange} />
-    //   ),
-    // },
+    {
+      key: 'actions',
+      label: 'Action',
+      align: 'center',
+      width: 72,
+      render: (_, row) => {
+        if (row.status !== 'failed') {
+          return <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>—</span>;
+        }
+        const busy = repayLoadingId === row.id;
+        return (
+          <button
+            type="button"
+            title="Repayment — retry failed payout"
+            aria-label="Repayment — retry failed payout"
+            disabled={busy}
+            onClick={(e) => {
+              e.stopPropagation();
+              openRepaymentConfirm(row);
+            }}
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--border)',
+              background: busy ? 'var(--border)' : 'var(--primary-light)',
+              color: 'var(--primary)',
+              cursor: busy ? 'default' : 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              opacity: busy ? 0.65 : 1,
+            }}
+          >
+            <RefreshCw
+              size={16}
+              strokeWidth={2.25}
+              aria-hidden
+              style={busy ? { animation: 'spin 0.8s linear infinite' } : undefined}
+            />
+          </button>
+        );
+      },
+    },
   ];
 
   return (
-    <div style={{ animation:'fadeIn 0.4s ease' }}>
+    <div style={{ animation: 'fadeIn 0.4s ease' }}>
       <ListPageToolbar title="Payouts">
-        <SearchBar value={search} onChange={setSearch} placeholder="Search payouts by explorer or experience…" style={{ flex:'1 1 240px', maxWidth:420, minWidth:160 }} />
-        <Select value={statusFilter} onChange={setStatusFilter} options={STATUS_OPTIONS} style={{ width:160, flexShrink:0 }} />
+        <SearchBar
+          value={payoutSearch}
+          onChange={setPayoutSearch}
+          placeholder="Search payouts by explorer or experience..."
+          style={{ flex: '1 1 200px', maxWidth: 380, minWidth: 160 }}
+        />
+        <Select
+          value={statusFilter}
+          onChange={setStatusFilter}
+          options={STATUS_OPTIONS}
+          style={{ width: 180, flexShrink: 0 }}
+        />
       </ListPageToolbar>
-      <DataTable columns={columns} data={payments} isLoading={loading} emptyMessage="No payouts found." rowKey="id" />
-      <Pagination page={page} totalPages={Math.ceil(total/LIMIT)} total={total} limit={LIMIT} onPageChange={setPage} />
+      <DataTable
+        columns={columns}
+        data={displayPayments}
+        isLoading={loading}
+        emptyMessage="No payouts found."
+        rowKey="id"
+      />
+      <Pagination
+        page={page}
+        totalPages={displayTotalPages}
+        total={displayTotal}
+        limit={LIMIT}
+        onPageChange={setPage}
+      />
+      <ConfirmModal
+        isOpen={!!repayConfirmRow}
+        onClose={closeRepaymentModal}
+        onConfirm={executeRepayment}
+        loading={!!repayLoadingId}
+        variant="primary"
+        title="Retry failed payout?"
+        confirmLabel="Retry payout"
+        message={
+          repayConfirmRow
+            ? 'This will initiate a new Paystack transfer. Confirm only if the underlying issue is fixed.'
+            : ''
+        }
+      />
     </div>
   );
 }

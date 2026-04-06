@@ -14,6 +14,8 @@ import {
   isExperienceRecurring,
   MOCK_EXPERIENCE_STATUSES,
 } from '../../utils/experienceType';
+import { getApiErrorMessage } from '../../utils/apiErrorMessage';
+import { notifyError } from '../../utils/notify';
 
 const TITLE_POOL = [
   'Afrobeats Night', 'Jazz & Wine', 'Tech Summit', 'Comedy Fiesta', 'Food Festival',
@@ -131,7 +133,7 @@ function normalizeExperience(row) {
   const weeklyDays = row.weeklyDays ?? row.daysOfWeek ?? row.weekdays;
 
   return {
-    id: String(row.id ?? ''),
+    id: String(row._id ?? row.id ?? ''),
     title: row.title ?? row.name ?? 'Experience',
     description: row.description ?? row.summary ?? '',
     tags: normalizeTags(row.tags ?? row.tagList),
@@ -161,16 +163,36 @@ function normalizeExperience(row) {
       'finishDate',
       'finish_date',
     ]),
-    location: row.location ?? row.address ?? row.venue ?? row.city,
-    media: normalizeMedia(row.media ?? row.images ?? row.imageUrls ?? row.coverImage),
+    location: row.locationText ?? row.location ?? row.address ?? row.venue ?? row.city,
+    media: normalizeMedia(
+      row.media ?? row.images ?? row.imageUrls ?? row.gallery ?? row.coverImage,
+    ),
     tickets: normalizeTickets(row.tickets ?? row.ticketTiers),
     activities: normalizeActivities(row.activities ?? row.addOns ?? row.extras),
     provider: {
-      id: row.provider?.id != null ? String(row.provider.id) : null,
+      id:
+        row.provider?._id != null
+          ? String(row.provider._id)
+          : row.provider?.id != null
+            ? String(row.provider.id)
+            : null,
       username: row.provider?.username ?? row.provider?.userName ?? row.provider?.handle,
-      name: row.provider?.name ?? row.provider?.businessName,
-      profileImageUrl: row.provider?.profileImageUrl ?? row.provider?.avatar ?? row.provider?.photo,
+      name:
+        row.provider?.name ??
+        row.provider?.businessName ??
+        (row.provider?.profile && typeof row.provider.profile === 'object'
+          ? String(row.provider.profile.businessName ?? '').trim() ||
+            [row.provider.profile.firstName, row.provider.profile.lastName].filter(Boolean).join(' ').trim()
+          : ''),
+      profileImageUrl:
+        row.provider?.profileImageUrl ??
+        row.provider?.avatar ??
+        row.provider?.photo ??
+        (row.provider?.profile && typeof row.provider.profile === 'object'
+          ? row.provider.profile.profilePicture
+          : null),
     },
+    pauseInfo: row.pauseInfo,
   };
 }
 
@@ -291,9 +313,10 @@ export default function ExperienceDetailPage() {
         setExp(normalizeExperience(row));
         setLoading(false);
       },
-      onError() {
-        setExp(mockExperienceDetail(experienceId));
+      onError(err) {
+        setExp(null);
         setLoading(false);
+        notifyError(getApiErrorMessage(err));
       },
     });
   }, [experienceId]);

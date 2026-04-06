@@ -5,21 +5,65 @@ export function DataTable({
   fixedLayout = false,
   minWidth = 560,
 }) {
+  /** Fixed layout + colgroup: every column has `width` and/or exactly one `fill` absorbs the rest. */
+  const useColGroup =
+    fixedLayout &&
+    columns.length > 0 &&
+    columns.every((c) => c.fill || c.width != null) &&
+    columns.filter((c) => c.fill).length <= 1;
+
+  const colWidthStyle = (col) => {
+    if (col.fill || col.width == null) return undefined;
+    return { width: typeof col.width === 'number' ? `${col.width}px` : col.width };
+  };
+
+  /** HTML width on <col> (plus style) — more reliable than style alone in some engines. */
+  const colWidthAttr = (col) => {
+    if (col.fill || col.width == null) return undefined;
+    return typeof col.width === 'number' ? col.width : String(col.width).trim();
+  };
+
+  const widthIsPercent = (col) =>
+    typeof col.width === 'string' && String(col.width).trim().endsWith('%');
+
+  const cellMaxWidth = (col) => {
+    if (col.fill) return undefined;
+    if (col.maxWidth !== undefined) return col.maxWidth;
+    if (!useColGroup) return col.width ? undefined : 260;
+    if (col.width == null) return 260;
+    if (widthIsPercent(col)) return undefined;
+    return typeof col.width === 'number' ? `${col.width}px` : col.width;
+  };
+
   return (
-    <div style={{
-      width: '100%',
-      overflowX: 'auto',
-      borderRadius: 'var(--radius-md)',
-      border: '1px solid var(--border)',
-      background: 'var(--bg-card)',
-    }}>
-      <table style={{
+    <div
+      style={{
         width: '100%',
-        borderCollapse: 'collapse',
-        minWidth,
-        ...(fixedLayout ? { tableLayout: 'fixed' } : {}),
+        overflowX: 'auto',
+        borderRadius: 'var(--radius-md)',
+        border: '1px solid var(--border)',
+        background: 'var(--bg-card)',
       }}
+    >
+      <table
+        style={{
+          width: '100%',
+          borderCollapse: 'collapse',
+          minWidth,
+          ...(fixedLayout ? { tableLayout: 'fixed' } : {}),
+        }}
       >
+        {useColGroup ? (
+          <colgroup>
+            {columns.map((col) =>
+              col.fill ? (
+                <col key={col.key} />
+              ) : (
+                <col key={col.key} width={colWidthAttr(col)} style={colWidthStyle(col)} />
+              ),
+            )}
+          </colgroup>
+        ) : null}
         <thead>
           <tr style={{ borderBottom: '2px solid var(--border)' }}>
             {columns.map((col) => (
@@ -34,7 +78,8 @@ export function DataTable({
                   textTransform: 'uppercase',
                   letterSpacing: '0.06em',
                   whiteSpace: 'nowrap',
-                  width: col.width,
+                  width: col.fill ? undefined : col.width,
+                  maxWidth: cellMaxWidth(col),
                   background: 'var(--bg-card)',
                   ...headerThStyle,
                 }}
@@ -105,8 +150,10 @@ export function DataTable({
                         color: 'var(--text-primary)',
                         textAlign: col.align || 'left',
                         verticalAlign: 'middle',
-                        width: col.width,
-                        maxWidth: col.maxWidth !== undefined ? col.maxWidth : (col.width ? undefined : 260),
+                        width: col.fill ? undefined : col.width,
+                        maxWidth: cellMaxWidth(col),
+                        minWidth: useColGroup ? 0 : undefined,
+                        overflow: useColGroup ? 'hidden' : undefined,
                       }}
                     >
                       <div style={{
