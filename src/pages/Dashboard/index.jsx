@@ -11,14 +11,28 @@ import { notifyError } from '../../utils/notify';
 import { StatCard } from '../../components/ui/StatCard';
 import { Card } from '../../components/ui/Card';
 import { DateRangeFilter } from '../../components/ui/DateRangeFilter';
+import { DateRangeInputs } from '../../components/ui/DateRangeInputs';
 import { StatusBadge } from '../../components/ui/Badge';
 import { PageHeader } from '../../components/ui/PageHeader';
 
-/** DateRangeFilter values → GET /admin/dashboard/stats ?period= */
+/** Preset tabs → GET /admin/dashboard/stats ?period= (API allows only week | month | year — no "custom"). */
 const PERIOD_UI_TO_API = { weekly: 'week', monthly: 'month', yearly: 'year' };
 
 function toApiPeriod(uiPeriod) {
   return PERIOD_UI_TO_API[uiPeriod] ?? 'week';
+}
+
+/** Pick a valid `period` for custom dates so the server accepts the request; window still driven by startDate/endDate. */
+function inferPeriodFromDateRange(startYmd, endYmd) {
+  const s = new Date(`${startYmd}T12:00:00`);
+  const e = new Date(`${endYmd}T12:00:00`);
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return 'week';
+  const start = s <= e ? s : e;
+  const end = s <= e ? e : s;
+  const inclusiveDays = Math.round((end - start) / 86400000) + 1;
+  if (inclusiveDays <= 7) return 'week';
+  if (inclusiveDays <= 31) return 'month';
+  return 'year';
 }
 
 function emptyDashboard() {
@@ -96,16 +110,35 @@ const CustomTooltip = ({ active, payload, label }) => {
 
 export default function DashboardPage() {
   const [period, setPeriod] = useState('weekly');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [statGridHover, setStatGridHover] = useState(null);
 
   const fetchStats = useCallback(() => {
+    if (period === 'custom') {
+      const from = String(customStart ?? '').trim();
+      const to = String(customEnd ?? '').trim();
+      if (!from || !to) {
+        setStats(emptyDashboard());
+        setLoading(false);
+        return;
+      }
+    }
+
     setLoading(true);
-    const apiPeriod = toApiPeriod(period);
+    const apiPeriod =
+      period === 'custom'
+        ? inferPeriodFromDateRange(String(customStart).trim(), String(customEnd).trim())
+        : toApiPeriod(period);
+    const opts =
+      period === 'custom'
+        ? { startDate: String(customStart).trim(), endDate: String(customEnd).trim() }
+        : {};
     callApi({
       method: Method.GET,
-      endPoint: api.getDashboardStats(apiPeriod),
+      endPoint: api.getDashboardStats(apiPeriod, opts),
       onSuccess(response) {
         setStats(normalizeDashboardResponse(response));
         setLoading(false);
@@ -116,7 +149,7 @@ export default function DashboardPage() {
         setLoading(false);
       },
     });
-  }, [period]);
+  }, [period, customStart, customEnd]);
 
   useEffect(() => { fetchStats(); }, [fetchStats]);
 
@@ -124,12 +157,41 @@ export default function DashboardPage() {
 
   const revenueDisplay = s.revenue.formatted ?? fmt(s.revenue.total).replace(/^\$/, '');
 
+  const customRangeIncomplete = period === 'custom'
+    && (!String(customStart).trim() || !String(customEnd).trim());
+
   return (
     <div style={{ animation:'fadeIn 0.4s ease' }}>
       <PageHeader
         title="Dashboard"
-        actions={<DateRangeFilter value={period} onChange={setPeriod} />}
+        actions={(
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10, maxWidth: '100%' }}>
+            <DateRangeFilter value={period} onChange={setPeriod} />
+            {period === 'custom' ? (
+              <DateRangeInputs
+                startDate={customStart}
+                endDate={customEnd}
+                onChange={({ startDate, endDate }) => {
+                  setCustomStart(startDate);
+                  setCustomEnd(endDate);
+                }}
+                onClear={() => {
+                  setCustomStart('');
+                  setCustomEnd('');
+                }}
+                idPrefix="dash-dr"
+                compact
+              />
+            ) : null}
+          </div>
+        )}
       />
+
+      {customRangeIncomplete ? (
+        <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--text-muted)' }}>
+          Select both <strong>From</strong> and <strong>To</strong> dates to load dashboard stats for a custom range.
+        </p>
+      ) : null}
 
       <div style={{ marginBottom: 24 }}>
         <div

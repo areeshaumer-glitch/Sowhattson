@@ -7,6 +7,7 @@ import { DataTable } from '../../components/ui/DataTable';
 import { Badge, StatusBadge } from '../../components/ui/Badge';
 import { Pagination } from '../../components/ui/Pagination';
 import { ListPageToolbar } from '../../components/ui/PageHeader';
+import { DateRangeInputs, isTimestampInDateRange } from '../../components/ui/DateRangeInputs';
 import { useDebounce } from '../../hooks/useDebounce';
 import { formatNameForCell } from '../../utils/formatNameForCell';
 import { getApiErrorMessage } from '../../utils/apiErrorMessage';
@@ -129,9 +130,10 @@ function normalizeTicket(row) {
 
   const status = String(row.ticketStatus ?? row.status ?? '').toLowerCase();
 
-  const purchasedAt = formatTicketDate(
-    row.purchasedAt ?? row.createdAt ?? row.bookedAt ?? row.paidAt,
-  );
+  const purchasedRaw = row.purchasedAt ?? row.createdAt ?? row.bookedAt ?? row.paidAt;
+  const purchasedAtMs = purchasedRaw != null ? Date.parse(String(purchasedRaw)) : NaN;
+
+  const purchasedAt = formatTicketDate(purchasedRaw);
   const eventDate = formatTicketDate(
     row.eventDate ?? row.experienceDate ?? ev?.resolvedEventDate ?? ev?.startDateTime ?? ev?.startDate ?? ev?.date ?? ev?.eventDate,
   );
@@ -147,6 +149,7 @@ function normalizeTicket(row) {
     amountLabel: formatMoney(amount, currency),
     status,
     purchasedAt,
+    purchasedAtMs: Number.isFinite(purchasedAtMs) ? purchasedAtMs : null,
     eventDate,
   };
 }
@@ -154,6 +157,8 @@ function normalizeTicket(row) {
 export default function TicketsPage() {
   const [ticketSearch, setTicketSearch] = useState('');
   const [status, setStatus] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
   const [tickets, setTickets] = useState([]);
   const [total, setTotal] = useState(0);
@@ -162,15 +167,25 @@ export default function TicketsPage() {
 
   const debouncedTicketSearch = useDebounce(ticketSearch, 350);
   const hasSearchQuery = debouncedTicketSearch.trim().length > 0;
-  const requestPage = hasSearchQuery ? 1 : page;
-  const requestLimit = hasSearchQuery ? CLIENT_TICKET_SEARCH_LIMIT : LIMIT;
+  const hasDateFilter = Boolean(String(dateFrom).trim() || String(dateTo).trim());
+  /** Wider fetch + client slice when search or date filter (API may not filter; need enough rows to paginate). */
+  const needsClientSlice = hasSearchQuery || hasDateFilter;
+  const requestPage = needsClientSlice ? 1 : page;
+  const requestLimit = needsClientSlice ? CLIENT_TICKET_SEARCH_LIMIT : LIMIT;
 
   const loadTickets = useCallback(() => {
     setLoading(true);
     const q = debouncedTicketSearch.trim();
     callApi({
       method: Method.GET,
-      endPoint: api.getAdminTickets(requestPage, requestLimit, status, q),
+      endPoint: api.getAdminTickets(
+        requestPage,
+        requestLimit,
+        status,
+        q,
+        String(dateFrom).trim(),
+        String(dateTo).trim(),
+      ),
       onSuccess(response) {
         const raw = response.tickets ?? response.data ?? response.results ?? [];
         const rows = (Array.isArray(raw) ? raw : []).map(normalizeTicket).filter(Boolean);
@@ -193,7 +208,7 @@ export default function TicketsPage() {
         notifyError(getApiErrorMessage(err));
       },
     });
-  }, [requestPage, requestLimit, status, debouncedTicketSearch]);
+  }, [requestPage, requestLimit, status, debouncedTicketSearch, dateFrom, dateTo]);
 
   useEffect(() => {
     loadTickets();
@@ -201,23 +216,32 @@ export default function TicketsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedTicketSearch, status]);
+  }, [debouncedTicketSearch, status, dateFrom, dateTo]);
 
   const queryLower = debouncedTicketSearch.trim().toLowerCase();
 
   const filteredTickets = useMemo(() => {
-    if (!queryLower) return tickets;
-    return tickets.filter((row) => ticketRowMatchesQuery(row, queryLower));
-  }, [tickets, queryLower]);
+    let list = tickets;
+    if (queryLower) list = list.filter((row) => ticketRowMatchesQuery(row, queryLower));
+    if (hasDateFilter) {
+      const from = String(dateFrom).trim();
+      const to = String(dateTo).trim();
+      list = list.filter((row) => {
+        if (row.purchasedAtMs == null) return false;
+        return isTimestampInDateRange(row.purchasedAtMs, from, to);
+      });
+    }
+    return list;
+  }, [tickets, queryLower, hasDateFilter, dateFrom, dateTo]);
 
   const displayTickets = useMemo(() => {
-    if (!queryLower) return tickets;
+    if (!needsClientSlice) return tickets;
     const start = (page - 1) * LIMIT;
     return filteredTickets.slice(start, start + LIMIT);
-  }, [tickets, filteredTickets, queryLower, page]);
+  }, [tickets, filteredTickets, needsClientSlice, page]);
 
-  const displayTotal = queryLower ? filteredTickets.length : total;
-  const displayTotalPages = queryLower
+  const displayTotal = needsClientSlice ? filteredTickets.length : total;
+  const displayTotalPages = needsClientSlice
     ? Math.max(1, Math.ceil(filteredTickets.length / LIMIT))
     : totalPages;
 
@@ -308,7 +332,7 @@ export default function TicketsPage() {
 
   return (
     <div style={{ animation: 'fadeIn 0.4s ease' }}>
-      <ListPageToolbar title="Tickets">
+      <ListPageToolbar title="Tickets" titleOwnRow>
         <SearchBar
           value={ticketSearch}
           onChange={setTicketSearch}
@@ -316,6 +340,20 @@ export default function TicketsPage() {
           style={{ flex: '1 1 200px', maxWidth: 380, minWidth: 160 }}
         />
         <Select value={status} onChange={setStatus} options={STATUS_OPTIONS} style={{ width: 180, flexShrink: 0 }} />
+        <DateRangeInputs
+          startDate={dateFrom}
+          endDate={dateTo}
+          onChange={({ startDate, endDate }) => {
+            setDateFrom(startDate);
+            setDateTo(endDate);
+          }}
+          onClear={() => {
+            setDateFrom('');
+            setDateTo('');
+          }}
+          idPrefix="tickets-dr"
+          compact
+        />
       </ListPageToolbar>
       <DataTable
         columns={columns}

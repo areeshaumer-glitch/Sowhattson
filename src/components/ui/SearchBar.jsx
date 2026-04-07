@@ -19,7 +19,7 @@ export const SearchBar = ({
       placeholder={placeholder}
       style={{
         width: '100%',
-        height: 40,
+        height: 42,
         padding: `0 ${value ? 36 : 14}px 0 38px`,
         border: '1.5px solid var(--border)',
         borderRadius: 'var(--radius-md)',

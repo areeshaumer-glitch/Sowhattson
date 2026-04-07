@@ -81,8 +81,9 @@ export function useMobileHeaderTitle(title) {
 /**
  * One row: page title (left), flexible gap, then search/filters grouped at the end (+ optional actions).
  * On small screens: title is shown only in the app header; filters stay on one row below.
+ * @param {boolean} [titleOwnRow] — Desktop only: title on the first line; all `children` on one row below (e.g. search + selects + date range).
  */
-export function ListPageToolbar({ title, children, actions }) {
+export function ListPageToolbar({ title, children, actions, titleOwnRow = false }) {
   const ctx = useOutletContext() ?? {};
   const { isMobile } = ctx;
   const toolbarBp = useToolbarBreakpoint();
@@ -204,6 +205,43 @@ export function ListPageToolbar({ title, children, actions }) {
           </div>
         ) : null}
         {actionsRow}
+      </div>
+    );
+  }
+
+  if (titleOwnRow && title) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 12,
+            width: '100%',
+          }}
+        >
+          <h1 style={{ ...listPageTitleStyle, margin: 0, flexShrink: 0 }}>{title}</h1>
+          {actions ? (
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexShrink: 0 }}>
+              {actions}
+            </div>
+          ) : null}
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 12,
+            width: '100%',
+            minWidth: 0,
+            justifyContent: 'flex-end',
+          }}
+        >
+          {children}
+        </div>
       </div>
     );
   }
