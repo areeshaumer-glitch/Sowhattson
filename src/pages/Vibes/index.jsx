@@ -10,6 +10,7 @@ import { Pagination } from '../../components/ui/Pagination';
 import { ConfirmModal } from '../../components/ui/Modal';
 import { useDebounce } from '../../hooks/useDebounce';
 import { ListPageToolbar } from '../../components/ui/PageHeader';
+import { PresignedImage } from '../../components/ui/PresignedImage';
 
 const MOCK = Array.from({ length:20 }, (_,i) => ({
   id:String(i+1), mediaUrl:`https://picsum.photos/seed/${i+1}/200/200`,
@@ -106,7 +107,7 @@ export default function VibesPage() {
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
           <div style={{ width:44, height:44, borderRadius:8, overflow:'hidden', background:'var(--border)', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
             {row.mediaType==='image'
-              ? <img src={row.mediaUrl} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }} />
+              ? <PresignedImage src={row.mediaUrl} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }} />
               : <Eye size={16} color="var(--text-muted)" />}
           </div>
           <div>

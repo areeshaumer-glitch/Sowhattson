@@ -9,6 +9,7 @@ import { StatusBadge } from '../../components/ui/Badge';
 import { Pagination } from '../../components/ui/Pagination';
 import { useDebounce } from '../../hooks/useDebounce';
 import { ListPageToolbar } from '../../components/ui/PageHeader';
+import { DateRangeInputs, isTimestampInDateRange } from '../../components/ui/DateRangeInputs';
 import { ConfirmModal } from '../../components/ui/Modal';
 import { formatStatusLabel } from '../../utils/formatStatusLabel';
 import { formatNameForCell } from '../../utils/formatNameForCell';
@@ -255,7 +256,7 @@ function normalizePayout(row) {
       : '—';
 
   const status = String(row.status ?? '').toLowerCase() || 'pending';
-  const paidAt =
+  const paidAtRaw =
     row.paidAt ??
     row.payoutDate ??
     row.releasedAt ??
@@ -263,6 +264,7 @@ function normalizePayout(row) {
     row.lastPayoutAttemptAt ??
     row.createdAt ??
     row.updatedAt;
+  const paidAtMs = paidAtRaw != null ? Date.parse(String(paidAtRaw)) : NaN;
 
   const failureHint = payoutFailureHint(row);
 
@@ -275,7 +277,8 @@ function normalizePayout(row) {
     explorerDetail,
     event: { title: eventTitle || '—' },
     provider: { name: providerName || '—' },
-    paidAt: formatPayoutDate(paidAt),
+    paidAt: formatPayoutDate(paidAtRaw),
+    paidAtMs: Number.isFinite(paidAtMs) ? paidAtMs : null,
     failureHint,
   };
 }
@@ -283,6 +286,8 @@ function normalizePayout(row) {
 export default function PaymentsPage() {
   const [payoutSearch, setPayoutSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
   const [payments, setPayments] = useState([]);
   const [total, setTotal] = useState(0);
@@ -293,8 +298,10 @@ export default function PaymentsPage() {
 
   const debouncedPayoutSearch = useDebounce(payoutSearch, 350);
   const hasSearchQuery = debouncedPayoutSearch.trim().length > 0;
-  const requestPage = hasSearchQuery ? 1 : page;
-  const requestLimit = hasSearchQuery ? CLIENT_SEARCH_FETCH_LIMIT : LIMIT;
+  const hasDateFilter = Boolean(String(dateFrom).trim() || String(dateTo).trim());
+  const needsClientSlice = hasSearchQuery || hasDateFilter;
+  const requestPage = needsClientSlice ? 1 : page;
+  const requestLimit = needsClientSlice ? CLIENT_SEARCH_FETCH_LIMIT : LIMIT;
 
   const loadPayouts = useCallback(() => {
     setLoading(true);
@@ -304,6 +311,8 @@ export default function PaymentsPage() {
         page: requestPage,
         limit: requestLimit,
         status: statusFilter,
+        startDate: String(dateFrom).trim(),
+        endDate: String(dateTo).trim(),
       }),
       onSuccess(response) {
         const raw = response.payouts ?? response.data ?? response.results ?? [];
@@ -327,7 +336,7 @@ export default function PaymentsPage() {
         notifyError(getApiErrorMessage(err));
       },
     });
-  }, [requestPage, requestLimit, statusFilter]);
+  }, [requestPage, requestLimit, statusFilter, dateFrom, dateTo]);
 
   useEffect(() => {
     loadPayouts();
@@ -336,24 +345,33 @@ export default function PaymentsPage() {
   const queryLower = debouncedPayoutSearch.trim().toLowerCase();
 
   const filteredPayments = useMemo(() => {
-    if (!queryLower) return payments;
-    return payments.filter((row) => payoutRowMatchesQuery(row, queryLower));
-  }, [payments, queryLower]);
+    let list = payments;
+    if (queryLower) list = list.filter((row) => payoutRowMatchesQuery(row, queryLower));
+    if (hasDateFilter) {
+      const from = String(dateFrom).trim();
+      const to = String(dateTo).trim();
+      list = list.filter((row) => {
+        if (row.paidAtMs == null) return false;
+        return isTimestampInDateRange(row.paidAtMs, from, to);
+      });
+    }
+    return list;
+  }, [payments, queryLower, hasDateFilter, dateFrom, dateTo]);
 
   const displayPayments = useMemo(() => {
-    if (!queryLower) return payments;
+    if (!needsClientSlice) return payments;
     const start = (page - 1) * LIMIT;
     return filteredPayments.slice(start, start + LIMIT);
-  }, [payments, filteredPayments, queryLower, page]);
+  }, [payments, filteredPayments, needsClientSlice, page]);
 
-  const displayTotal = queryLower ? filteredPayments.length : total;
-  const displayTotalPages = queryLower
+  const displayTotal = needsClientSlice ? filteredPayments.length : total;
+  const displayTotalPages = needsClientSlice
     ? Math.max(1, Math.ceil(filteredPayments.length / LIMIT))
     : totalPages;
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedPayoutSearch, statusFilter]);
+  }, [debouncedPayoutSearch, statusFilter, dateFrom, dateTo]);
 
   const openRepaymentConfirm = (row) => {
     if (row.status !== 'failed' || repayLoadingId) return;
@@ -510,7 +528,7 @@ export default function PaymentsPage() {
 
   return (
     <div style={{ animation: 'fadeIn 0.4s ease' }}>
-      <ListPageToolbar title="Payouts">
+      <ListPageToolbar title="Payouts" titleOwnRow>
         <SearchBar
           value={payoutSearch}
           onChange={setPayoutSearch}
@@ -522,6 +540,20 @@ export default function PaymentsPage() {
           onChange={setStatusFilter}
           options={STATUS_OPTIONS}
           style={{ width: 180, flexShrink: 0 }}
+        />
+        <DateRangeInputs
+          startDate={dateFrom}
+          endDate={dateTo}
+          onChange={({ startDate, endDate }) => {
+            setDateFrom(startDate);
+            setDateTo(endDate);
+          }}
+          onClear={() => {
+            setDateFrom('');
+            setDateTo('');
+          }}
+          idPrefix="payouts-dr"
+          compact
         />
       </ListPageToolbar>
       <DataTable

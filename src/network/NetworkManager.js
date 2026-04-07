@@ -52,6 +52,31 @@ export async function performLogout() {
   }
 }
 
+/**
+ * GET /s3/file/{key} — time-limited URL for displaying private uploads.
+ * Returns null if the request fails or the body shape is unexpected.
+ */
+export async function fetchS3PresignedUrl(key) {
+  const k = String(key ?? '').trim();
+  if (!k) return null;
+  try {
+    const { data } = await axiosInstance.get(api.getS3PresignedFile(k));
+    if (typeof data === 'string' && /^https?:\/\//i.test(data)) return data;
+    const url =
+      (typeof data?.url === 'string' ? data.url : null)
+      ?? (typeof data?.presignedUrl === 'string' ? data.presignedUrl : null)
+      ?? (typeof data?.signedUrl === 'string' ? data.signedUrl : null)
+      ?? (typeof data?.link === 'string' ? data.link : null)
+      ?? (typeof data?.href === 'string' ? data.href : null)
+      ?? (typeof data?.data === 'string' && /^https?:\/\//i.test(data.data) ? data.data : null)
+      ?? (typeof data?.data?.url === 'string' ? data.data.url : null)
+      ?? (typeof data?.data?.presignedUrl === 'string' ? data.data.presignedUrl : null);
+    return url && /^https?:\/\//i.test(url) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 /* ─── Token refresh helper ───────────────────────────────── */
 const refreshAccessToken = async () => {
   try {
