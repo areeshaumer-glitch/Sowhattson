@@ -23,10 +23,18 @@ export const api = {
   markUserNotificationRead: (id) => `notifications/${id}/read`,
   markAllUserNotificationsRead: 'notifications/read-all',
 
+  /** GET /s3/file/{key} — presigned URL for stored object (`key` may contain `/`, passed as one encoded segment). */
+  getS3PresignedFile: (key) => `s3/file/${encodeURIComponent(String(key ?? '').trim())}`,
+
   // ── ADMIN DASHBOARD ───────────────────────────────────────
-  getDashboardStats: (period) => {
+  /** period: week | month | year only — optional startDate/endDate (YYYY-MM-DD) for a fixed window */
+  getDashboardStats: (period, { startDate = '', endDate = '' } = {}) => {
     const p = new URLSearchParams();
     p.set('period', period);
+    const from = String(startDate ?? '').trim();
+    const to = String(endDate ?? '').trim();
+    if (from) p.set('startDate', from);
+    if (to) p.set('endDate', to);
     return `admin/dashboard/stats?${p.toString()}`;
   },
 
@@ -59,9 +67,16 @@ export const api = {
   resumeAdminEvent:     (id) => `admin/events/${id}/resume`,
   deleteAdminEvent:     (id) => `admin/events/${id}`,
 
+  /** GET /events/{eventId} — event by ID; includeVibes true|false (default true). */
+  getEventById: (eventId, includeVibes = true) => {
+    const p = new URLSearchParams();
+    p.set('includeVibes', includeVibes === false ? 'false' : 'true');
+    return `events/${eventId}?${p.toString()}`;
+  },
+
   // ── ADMIN TICKETS ─────────────────────────────────────────
-  /** GET /tickets/admin/all — page, limit, status, search (optional; ignored if unsupported) */
-  getAdminTickets: (page = 1, limit = 10, status = '', search = '') => {
+  /** GET /tickets/admin/all — page, limit, status, search; startDate/endDate YYYY-MM-DD (optional) */
+  getAdminTickets: (page = 1, limit = 10, status = '', search = '', startDate = '', endDate = '') => {
     const p = new URLSearchParams();
     p.set('page', String(page));
     p.set('limit', String(limit));
@@ -69,8 +84,14 @@ export const api = {
     if (s) p.set('status', s);
     const q = String(search ?? '').trim();
     if (q) p.set('search', q);
+    const from = String(startDate ?? '').trim();
+    const to = String(endDate ?? '').trim();
+    if (from) p.set('startDate', from);
+    if (to) p.set('endDate', to);
     return `tickets/admin/all?${p.toString()}`;
   },
+  /** GET /tickets/event/{eventId} — all ticket purchases for an event. */
+  getEventTickets: (eventId) => `tickets/event/${eventId}`,
   cancelAdminTicket:    (id) => `admin/tickets/${id}/cancel`,
   refundAdminTicket:    (id) => `admin/tickets/${id}/refund`,
 
@@ -86,16 +107,53 @@ export const api = {
   verifyAdminProvider:  (id) => `admin/providers/${id}/verify`,
   suspendAdminProvider:   (id) => `admin/providers/${id}/suspend`,
   activateAdminProvider:  (id) => `admin/providers/${id}/activate`,
+  /** PATCH — block provider (body: { reason }); invalidates tokens. */
+  blockAdminProvider:   (userId) => `admin/providers/${userId}/block`,
+  /** PATCH — unblock provider; user must sign in again. */
+  unblockAdminProvider: (userId) => `admin/providers/${userId}/unblock`,
 
-  // ── ADMIN USERS ───────────────────────────────────────────
+  // ── ADMIN USERS (legacy list path — prefer getUsers) ───────
   getAdminUsers: (page = 1, limit = 20, search = '', role = '') => {
     const p = new URLSearchParams();
     p.append('page', String(page));
     p.append('limit', String(limit));
     if (search) p.append('search', search);
-    if (role)   p.append('role', role);
+    if (role) p.append('role', role);
     return `admin/users?${p.toString()}`;
   },
+
+  /**
+   * GET /users — Admin user management (pagination, role/status filters, search).
+   * role: all | explorer | provider | admin | guest
+   * status: all | active | deleted | verified | unverified | …
+   * sortBy: createdAt | updatedAt | email | role — sortOrder: asc | desc
+   */
+  getUsers: ({
+    page = 1,
+    limit = 20,
+    role = 'all',
+    status = 'all',
+    search = '',
+    sortBy = 'createdAt',
+    sortOrder = 'desc',
+  } = {}) => {
+    const p = new URLSearchParams();
+    p.set('page', String(page));
+    p.set('limit', String(limit));
+    const r = String(role ?? 'all').trim() || 'all';
+    p.set('role', r);
+    const st = String(status ?? 'all').trim() || 'all';
+    p.set('status', st);
+    const q = String(search ?? '').trim();
+    if (q) p.set('search', q);
+    const sb = String(sortBy || 'createdAt').trim();
+    if (['createdAt', 'updatedAt', 'email', 'role'].includes(sb)) p.set('sortBy', sb);
+    const so = String(sortOrder || 'desc').toLowerCase();
+    if (so === 'asc' || so === 'desc') p.set('sortOrder', so);
+    return `users?${p.toString()}`;
+  },
+  /** GET /users/:userId — single user (admin). */
+  getUserById: (userId) => `users/${userId}`,
   suspendAdminUser:     (id) => `admin/users/${id}/suspend`,
   activateAdminUser:    (id) => `admin/users/${id}/activate`,
   deleteAdminUser:      (id) => `admin/users/${id}`,
@@ -172,6 +230,8 @@ export const api = {
     limit = 20,
     status = 'all',
     providerName = '',
+    startDate = '',
+    endDate = '',
   } = {}) => {
     const p = new URLSearchParams();
     p.set('page', String(page));
@@ -179,6 +239,10 @@ export const api = {
     p.set('status', status && String(status).trim() ? String(status).trim() : 'all');
     const prov = String(providerName ?? '').trim();
     if (prov) p.set('providerName', prov);
+    const from = String(startDate ?? '').trim();
+    const to = String(endDate ?? '').trim();
+    if (from) p.set('startDate', from);
+    if (to) p.set('endDate', to);
     return `payouts?${p.toString()}`;
   },
   /** POST /admin/payouts/{payoutId}/retry — retry failed payout (admin; Paystack transfer) */

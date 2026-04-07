@@ -7,6 +7,7 @@ import { Card } from '../../components/ui/Card';
 import { Modal } from '../../components/ui/Modal';
 import { StatusBadge } from '../../components/ui/Badge';
 import { useMobileHeaderTitle } from '../../components/ui/PageHeader';
+import { PresignedImage } from '../../components/ui/PresignedImage';
 import {
   formatExperienceTypeLabel,
   getExperienceStatus,
@@ -26,6 +27,46 @@ const TITLE_POOL = [
 function formatMoney(n) {
   if (n == null || Number.isNaN(Number(n))) return '—';
   return `₦${Number(n).toLocaleString()}`;
+}
+
+function formatMoneyCurrency(n, currency) {
+  if (n == null || Number.isNaN(Number(n))) return '—';
+  const code = String(currency ?? 'NGN').trim().toUpperCase() || 'NGN';
+  const num = Number(n);
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency: code }).format(num);
+  } catch {
+    return `${code} ${num.toLocaleString()}`;
+  }
+}
+
+function summarizePurchaseLines(purchase) {
+  const lines = purchase?.tickets;
+  if (!Array.isArray(lines) || lines.length === 0) return '—';
+  return lines
+    .map((t) => {
+      const name = String(t?.ticketName ?? t?.name ?? 'Ticket').trim() || 'Ticket';
+      const q = Number(t?.quantity);
+      const qty = Number.isFinite(q) && q > 0 ? q : 0;
+      return qty ? `${name} ×${qty}` : name;
+    })
+    .join(', ');
+}
+
+function purchaseTicketQtySum(purchase) {
+  const lines = purchase?.tickets;
+  if (!Array.isArray(lines)) return 0;
+  return lines.reduce((acc, t) => {
+    const q = Number(t?.quantity);
+    return acc + (Number.isFinite(q) ? q : 0);
+  }, 0);
+}
+
+function formatDetailDateTime(raw) {
+  if (raw == null || String(raw).trim() === '') return '—';
+  const t = Date.parse(String(raw));
+  if (Number.isNaN(t)) return String(raw).trim();
+  return new Date(t).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 function dash(v) {
@@ -70,6 +111,21 @@ function normalizeTags(raw) {
   return [];
 }
 
+/** GET /events/:id may return `vibes` (active); merge into tag chips. */
+function normalizeVibeLabels(vibes) {
+  if (!Array.isArray(vibes)) return [];
+  return vibes
+    .map((v) => {
+      if (v == null) return '';
+      if (typeof v === 'string') return v.trim();
+      if (typeof v === 'object') {
+        return String(v.name ?? v.title ?? v.label ?? v.slug ?? '').trim();
+      }
+      return '';
+    })
+    .filter(Boolean);
+}
+
 function normalizeTickets(raw) {
   const base = {
     regular: { price: null, total: null },
@@ -94,7 +150,12 @@ function normalizeTickets(raw) {
       const slot = label.includes('vip') ? 'vip' : label.includes('kid') ? 'kids' : 'regular';
       base[slot] = {
         price: t.price ?? t.amount ?? base[slot].price,
-        total: t.total ?? t.quantity ?? t.capacity ?? base[slot].total,
+        total:
+          t.totalSeats
+          ?? t.total
+          ?? t.quantity
+          ?? t.capacity
+          ?? base[slot].total,
       };
     });
     return base;
@@ -124,19 +185,60 @@ function normalizeMedia(raw) {
   return one ? [one] : [];
 }
 
+/** GET /events/:id — coverImage, gallery[], attachments[] (deduped, cover first). */
+function collectEventMedia(row) {
+  if (!row || typeof row !== 'object') return [];
+  const urls = [];
+  const add = (u) => {
+    const x = resolveImagePreviewUrl(u);
+    if (x && !urls.includes(x)) urls.push(x);
+  };
+  add(row.coverImage);
+  if (Array.isArray(row.gallery)) row.gallery.forEach(add);
+  if (Array.isArray(row.attachments)) row.attachments.forEach(add);
+  const fallback = normalizeMedia(row.media ?? row.images ?? row.imageUrls);
+  fallback.forEach((x) => {
+    if (x && !urls.includes(x)) urls.push(x);
+  });
+  return urls;
+}
+
 function normalizeExperience(row) {
   if (!row || typeof row !== 'object') return null;
   const recurring = isExperienceRecurring(row);
   const kind = inferRecurrenceKind(row, recurring);
 
-  const monthlyDates = row.monthlyDates ?? row.monthDates ?? row.datesOfMonth ?? row.recurrenceDates;
-  const weeklyDays = row.weeklyDays ?? row.daysOfWeek ?? row.weekdays;
+  const rr = row.recurrenceRule && typeof row.recurrenceRule === 'object' ? row.recurrenceRule : null;
+  const monthlyDates =
+    row.monthlyDates
+    ?? row.monthDates
+    ?? row.datesOfMonth
+    ?? row.recurrenceDates
+    ?? rr?.datesOfMonth;
+  const weeklyDays =
+    row.weeklyDays
+    ?? row.daysOfWeek
+    ?? row.weekdays
+    ?? rr?.daysOfWeek;
+
+  const categoryTag =
+    row.category != null && String(row.category).trim()
+      ? [String(row.category).trim().replace(/_/g, ' ')]
+      : [];
+  const tagParts = [
+    ...categoryTag,
+    ...normalizeTags(row.tags ?? row.tagList),
+    ...normalizeVibeLabels(row.vibes),
+  ];
+  const tags = [...new Set(tagParts)];
+
+  const provSrc = row.provider ?? row.organiser ?? row.organizer ?? row.createdBy;
 
   return {
     id: String(row._id ?? row.id ?? ''),
     title: row.title ?? row.name ?? 'Experience',
     description: row.description ?? row.summary ?? '',
-    tags: normalizeTags(row.tags ?? row.tagList),
+    tags,
     status: getExperienceStatus(row),
     experienceType: recurring ? 'recurring' : 'one_time',
     recurrenceKind: recurring ? kind : null,
@@ -144,6 +246,8 @@ function normalizeExperience(row) {
     weeklyDays: Array.isArray(weeklyDays) ? weeklyDays.map(String) : [],
     until: row.until ?? row.recurrenceEnd ?? row.endsAt ?? row.endDate ?? null,
     startDate: pickFirstPresent(row, [
+      'startDateTime',
+      'eventTime',
       'startDate',
       'start_date',
       'startsAt',
@@ -162,34 +266,47 @@ function normalizeExperience(row) {
       'event_end',
       'finishDate',
       'finish_date',
+      'eventTime',
     ]),
-    location: row.locationText ?? row.location ?? row.address ?? row.venue ?? row.city,
-    media: normalizeMedia(
-      row.media ?? row.images ?? row.imageUrls ?? row.gallery ?? row.coverImage,
-    ),
+    location: (() => {
+      if (row.locationText != null && String(row.locationText).trim()) return row.locationText;
+      if (typeof row.location === 'string' && row.location.trim()) return row.location;
+      if (row.location && typeof row.location === 'object') {
+        const a = row.location.address ?? row.location.label;
+        if (a != null && String(a).trim()) return String(a).trim();
+      }
+      return row.address ?? row.venue ?? row.city ?? '';
+    })(),
+    media: collectEventMedia(row),
     tickets: normalizeTickets(row.tickets ?? row.ticketTiers),
     activities: normalizeActivities(row.activities ?? row.addOns ?? row.extras),
     provider: {
       id:
-        row.provider?._id != null
-          ? String(row.provider._id)
-          : row.provider?.id != null
-            ? String(row.provider.id)
+        provSrc?._id != null
+          ? String(provSrc._id)
+          : provSrc?.id != null
+            ? String(provSrc.id)
             : null,
-      username: row.provider?.username ?? row.provider?.userName ?? row.provider?.handle,
+      username:
+        provSrc?.username
+        ?? provSrc?.userName
+        ?? provSrc?.handle
+        ?? (provSrc?.profile && typeof provSrc.profile === 'object'
+          ? String(provSrc.profile.username ?? '').trim() || null
+          : null),
       name:
-        row.provider?.name ??
-        row.provider?.businessName ??
-        (row.provider?.profile && typeof row.provider.profile === 'object'
-          ? String(row.provider.profile.businessName ?? '').trim() ||
-            [row.provider.profile.firstName, row.provider.profile.lastName].filter(Boolean).join(' ').trim()
+        provSrc?.name ??
+        provSrc?.businessName ??
+        (provSrc?.profile && typeof provSrc.profile === 'object'
+          ? String(provSrc.profile.businessName ?? '').trim() ||
+            [provSrc.profile.firstName, provSrc.profile.lastName].filter(Boolean).join(' ').trim()
           : ''),
       profileImageUrl:
-        row.provider?.profileImageUrl ??
-        row.provider?.avatar ??
-        row.provider?.photo ??
-        (row.provider?.profile && typeof row.provider.profile === 'object'
-          ? row.provider.profile.profilePicture
+        provSrc?.profileImageUrl ??
+        provSrc?.avatar ??
+        provSrc?.photo ??
+        (provSrc?.profile && typeof provSrc.profile === 'object'
+          ? provSrc.profile.profilePicture
           : null),
     },
     pauseInfo: row.pauseInfo,
@@ -298,6 +415,9 @@ export default function ExperienceDetailPage() {
   const [exp, setExp] = useState(null);
   const [loading, setLoading] = useState(true);
   const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
+  const [eventSales, setEventSales] = useState(null);
+  const [eventSalesLoading, setEventSalesLoading] = useState(true);
+  const [eventSalesError, setEventSalesError] = useState(null);
 
   const mobileTitle = loading ? 'Experience' : exp?.title || 'Experience';
   useMobileHeaderTitle(mobileTitle);
@@ -307,9 +427,9 @@ export default function ExperienceDetailPage() {
     setLoading(true);
     callApi({
       method: Method.GET,
-      endPoint: api.getAdminEventById(experienceId),
+      endPoint: api.getEventById(experienceId, true),
       onSuccess(response) {
-        const row = response.data ?? response.event ?? response;
+        const row = response.event ?? response.data ?? response;
         setExp(normalizeExperience(row));
         setLoading(false);
       },
@@ -322,6 +442,32 @@ export default function ExperienceDetailPage() {
   }, [experienceId]);
 
   useEffect(() => { fetchExperience(); }, [fetchExperience]);
+
+  const fetchEventTickets = useCallback(() => {
+    if (!experienceId) return;
+    setEventSalesLoading(true);
+    setEventSalesError(null);
+    callApi({
+      method: Method.GET,
+      endPoint: api.getEventTickets(experienceId),
+      onSuccess(response) {
+        setEventSales({
+          tickets: Array.isArray(response.tickets) ? response.tickets : [],
+          count: Number(response.count) || 0,
+          totalRevenue: response.totalRevenue,
+          totalTicketsSold: response.totalTicketsSold,
+        });
+        setEventSalesLoading(false);
+      },
+      onError(err) {
+        setEventSales(null);
+        setEventSalesError(getApiErrorMessage(err));
+        setEventSalesLoading(false);
+      },
+    });
+  }, [experienceId]);
+
+  useEffect(() => { fetchEventTickets(); }, [fetchEventTickets]);
 
   if (loading) {
     return (
@@ -658,7 +804,7 @@ export default function ExperienceDetailPage() {
                           background: 'transparent',
                         }}
                       >
-                        <img
+                        <PresignedImage
                           src={url}
                           alt=""
                           style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }}
@@ -687,6 +833,139 @@ export default function ExperienceDetailPage() {
               <Ticket size={18} color="var(--primary)" />
               <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: 'var(--text-primary)', minWidth: 0 }}>Tickets</h2>
             </div>
+
+            <p style={{ margin: '0 0 12px', fontSize: 12.5, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              Sales & bookings
+            </p>
+            {eventSalesLoading ? (
+              <p style={{ margin: '0 0 20px', fontSize: 13, color: 'var(--text-muted)' }}>Loading ticket sales…</p>
+            ) : eventSalesError ? (
+              <p style={{ margin: '0 0 20px', fontSize: 13, color: 'var(--danger)', lineHeight: 1.45 }}>{eventSalesError}</p>
+            ) : eventSales ? (
+              <>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: isMobile
+                      ? 'repeat(auto-fit, minmax(min(100%, 140px), 1fr))'
+                      : 'repeat(3, minmax(0, 1fr))',
+                    gap: 12,
+                    marginBottom: 16,
+                    width: '100%',
+                    minWidth: 0,
+                  }}
+                >
+                  {[
+                    { label: 'Bookings', value: String(eventSales.count ?? eventSales.tickets.length) },
+                    {
+                      label: 'Tickets sold',
+                      value: String(
+                        eventSales.totalTicketsSold != null
+                          ? eventSales.totalTicketsSold
+                          : eventSales.tickets.reduce((a, p) => a + purchaseTicketQtySum(p), 0),
+                      ),
+                    },
+                    {
+                      label: 'Total revenue',
+                      value: formatMoneyCurrency(
+                        eventSales.totalRevenue,
+                        eventSales.tickets[0]?.currency,
+                      ),
+                    },
+                  ].map((stat) => (
+                    <div
+                      key={stat.label}
+                      style={{
+                        padding: isMobile ? 12 : 14,
+                        borderRadius: 'var(--radius-md)',
+                        border: '1px solid var(--border)',
+                        background: 'var(--bg-input)',
+                        minWidth: 0,
+                      }}
+                    >
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>{stat.label}</span>
+                      <p style={{ margin: '6px 0 0', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>{stat.value}</p>
+                    </div>
+                  ))}
+                </div>
+                {eventSales.tickets.length === 0 ? (
+                  <p style={{ margin: '0 0 20px', fontSize: 13, color: 'var(--text-muted)' }}>No purchases yet for this experience.</p>
+                ) : (
+                  <div
+                    style={{
+                      width: '100%',
+                      overflowX: 'auto',
+                      marginBottom: 20,
+                      WebkitOverflowScrolling: 'touch',
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--border)',
+                    }}
+                  >
+                    <table
+                      style={{
+                        width: '100%',
+                        minWidth: isMobile ? 640 : 720,
+                        borderCollapse: 'collapse',
+                        fontSize: 12.5,
+                      }}
+                    >
+                      <thead>
+                        <tr style={{ borderBottom: '2px solid var(--border)', background: 'var(--bg-input)' }}>
+                          {['Reference', 'Customer', 'Email', 'Items', 'Amount', 'Status', 'Date'].map((h) => (
+                            <th
+                              key={h}
+                              style={{
+                                textAlign: 'left',
+                                padding: '10px 12px',
+                                fontWeight: 700,
+                                color: 'var(--text-muted)',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.05em',
+                                fontSize: 10.5,
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {h}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {eventSales.tickets.map((p) => (
+                          <tr key={String(p._id ?? p.transactionId ?? p.bookingReference)} style={{ borderBottom: '1px solid var(--border)' }}>
+                            <td style={{ padding: '10px 12px', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
+                              {dash(p.bookingReference ?? p.transactionId)}
+                            </td>
+                            <td style={{ padding: '10px 12px', color: 'var(--text-primary)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {dash(p.customerName)}
+                            </td>
+                            <td style={{ padding: '10px 12px', color: 'var(--text-secondary)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {dash(p.customerEmail)}
+                            </td>
+                            <td style={{ padding: '10px 12px', color: 'var(--text-secondary)', lineHeight: 1.4, maxWidth: 220 }}>
+                              {summarizePurchaseLines(p)}
+                            </td>
+                            <td style={{ padding: '10px 12px', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                              {formatMoneyCurrency(p.totalAmount, p.currency)}
+                            </td>
+                            <td style={{ padding: '10px 12px' }}>
+                              {p.paymentStatus ? <StatusBadge status={String(p.paymentStatus)} /> : '—'}
+                            </td>
+                            <td style={{ padding: '10px 12px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                              {formatDetailDateTime(p.createdAt)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            ) : null}
+
+            <p style={{ margin: '16px 0 12px', fontSize: 12.5, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              Ticket types (listing)
+            </p>
             <div
               style={{
                 display: 'grid',
@@ -722,7 +1001,7 @@ export default function ExperienceDetailPage() {
                       <p style={{ margin: '4px 0 0', fontSize: 14, fontWeight: 600, color: 'var(--primary)' }}>{formatMoney(row.price)}</p>
                     </div>
                     <div>
-                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>Total tickets</span>
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>Capacity</span>
                       <p style={{ margin: '4px 0 0', fontSize: 14, fontWeight: 600 }}>{dash(row.total)}</p>
                     </div>
                   </div>
@@ -788,7 +1067,7 @@ export default function ExperienceDetailPage() {
                             background: 'transparent',
                           }}
                         >
-                          <img src={a.image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />
+                          <PresignedImage src={a.image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />
                         </button>
                       ) : (
                         <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
@@ -834,7 +1113,7 @@ export default function ExperienceDetailPage() {
                 }}
               >
                 {p.profileImageUrl ? (
-                  <img
+                  <PresignedImage
                     src={p.profileImageUrl}
                     alt=""
                     style={{
@@ -906,7 +1185,7 @@ export default function ExperienceDetailPage() {
                 }}
               >
                 {p?.profileImageUrl ? (
-                  <img
+                  <PresignedImage
                     src={p.profileImageUrl}
                     alt=""
                     style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', border: '1px solid var(--border)' }}
@@ -986,7 +1265,7 @@ export default function ExperienceDetailPage() {
           }}
         >
           {imagePreviewUrl ? (
-            <img
+            <PresignedImage
               key={imagePreviewUrl}
               src={imagePreviewUrl}
               alt=""

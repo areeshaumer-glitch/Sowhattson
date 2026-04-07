@@ -1,60 +1,16 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Link, useNavigate, useParams, useOutletContext } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Link, useLocation, useNavigate, useParams, useOutletContext } from 'react-router-dom';
 import { ArrowLeft, CheckCircle, Info, Landmark, XCircle } from 'lucide-react';
 import { callApi, Method } from '../../network/NetworkManager';
 import { api } from '../../network/Environment';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { ConfirmModal, Modal } from '../../components/ui/Modal';
-import { findMockProvider } from './mockProviders';
 import { formatStatusLabel } from '../../utils/formatStatusLabel';
+import { getApiErrorMessage } from '../../utils/apiErrorMessage';
+import { notifyError } from '../../utils/notify';
 import { useMobileHeaderTitle } from '../../components/ui/PageHeader';
-
-/** Persist verification UI when API is unavailable (mock); cleared after a successful API verify. */
-const PROVIDER_VERIFY_STORAGE_PREFIX = 'sw_admin_provider_verify:';
-
-function readPersistedVerification(id) {
-  if (id == null) return null;
-  try {
-    const raw = sessionStorage.getItem(PROVIDER_VERIFY_STORAGE_PREFIX + id);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
-function persistVerificationSnapshot(providerId, snapshot) {
-  try {
-    sessionStorage.setItem(PROVIDER_VERIFY_STORAGE_PREFIX + providerId, JSON.stringify(snapshot));
-  } catch {
-    /* quota / private mode */
-  }
-}
-
-function clearPersistedVerification(providerId) {
-  try {
-    sessionStorage.removeItem(PROVIDER_VERIFY_STORAGE_PREFIX + providerId);
-  } catch { /* ignore */ }
-}
-
-function applyPersistedVerificationOverride(base) {
-  if (!base?.id) return base;
-  const patch = readPersistedVerification(base.id);
-  if (!patch) return base;
-  return {
-    ...base,
-    verificationStatus: patch.verificationStatus ?? base.verificationStatus,
-    isVerified: patch.isVerified ?? base.isVerified,
-    organizerVerification: {
-      phone: patch.organizerVerification?.phone ?? base.organizerVerification?.phone,
-      email: patch.organizerVerification?.email ?? base.organizerVerification?.email,
-      documentType: patch.organizerVerification?.documentType ?? base.organizerVerification?.documentType,
-      documents: patch.organizerVerification?.documents
-        ? mergeDocuments(patch.organizerVerification.documents)
-        : mergeDocuments(base.organizerVerification?.documents),
-    },
-  };
-}
+import { PresignedImage } from '../../components/ui/PresignedImage';
 
 function emptyDocuments() {
   return {
@@ -63,17 +19,6 @@ function emptyDocuments() {
     drivingLicense: { front: null, back: null },
     nationalIdCard: { front: null, back: null },
     selfie: null,
-  };
-}
-
-function demoDocumentsOnVerify(providerId) {
-  const s = `v${providerId}`;
-  return {
-    identityCard: { front: `https://picsum.photos/seed/${s}idf/420/280`, back: `https://picsum.photos/seed/${s}idb/420/280` },
-    passport: { front: `https://picsum.photos/seed/${s}pf/420/280`, back: `https://picsum.photos/seed/${s}pb/420/280` },
-    drivingLicense: { front: `https://picsum.photos/seed/${s}df/420/280`, back: `https://picsum.photos/seed/${s}db/420/280` },
-    nationalIdCard: { front: `https://picsum.photos/seed/${s}nf/420/280`, back: `https://picsum.photos/seed/${s}nb/420/280` },
-    selfie: `https://picsum.photos/seed/${s}selfie/400/400`,
   };
 }
 
@@ -89,21 +34,41 @@ function mergeDocuments(raw) {
   };
 }
 
-/** Prefer existing uploaded URLs; fill gaps from demo set when admin verifies. */
-function mergeDocPairs(demo, current) {
-  const c = mergeDocuments(current);
-  const d = mergeDocuments(demo);
-  const pick = (a, b) => ({
-    front: a.front || b.front || null,
-    back: a.back || b.back || null,
-  });
-  return {
-    identityCard: pick(c.identityCard, d.identityCard),
-    passport: pick(c.passport, d.passport),
-    drivingLicense: pick(c.drivingLicense, d.drivingLicense),
-    nationalIdCard: pick(c.nationalIdCard, d.nationalIdCard),
-    selfie: c.selfie || d.selfie || null,
+/** Backend `profile.idVerification` + `selfieVerificationImage` → organizer document shape. */
+function documentsFromProfileIdVerification(profile) {
+  if (!profile || typeof profile !== 'object') return undefined;
+  const iv = profile.idVerification || profile.id_verification;
+  const selfie =
+    profile.selfieVerificationImage
+    ?? profile.selfie_verification_image
+    ?? null;
+  if (!iv || typeof iv !== 'object') {
+    return selfie ? { ...emptyDocuments(), selfie } : undefined;
+  }
+  const front = iv.frontImage ?? iv.front_image ?? null;
+  const back = iv.backImage ?? iv.back_image ?? null;
+  if (!front && !back && !selfie) return undefined;
+  const method = String(iv.method ?? 'identity_card').toLowerCase();
+  const pair = { front, back };
+  const docs = { ...emptyDocuments(), selfie: selfie || null };
+  if (method.includes('passport')) docs.passport = pair;
+  else if (method.includes('driving') || method.includes('license')) docs.drivingLicense = pair;
+  else if (method.includes('national')) docs.nationalIdCard = pair;
+  else docs.identityCard = pair;
+  return docs;
+}
+
+function formatIdMethodLabel(method) {
+  const key = String(method ?? '').trim().toLowerCase();
+  if (!key) return undefined;
+  const labels = {
+    identity_card: 'Identity card',
+    driving_license: 'Driving license',
+    passport: 'Passport',
+    national_id_card: 'National ID',
   };
+  if (labels[key]) return labels[key];
+  return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function pushPairSides(out, pair, prefix) {
@@ -145,7 +110,7 @@ function DocumentImageTile({ url, onPreview }) {
       }}
     >
       <div style={{ aspectRatio: '4 / 3', width: '100%', minHeight: 0 }}>
-        <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />
+        <PresignedImage src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />
       </div>
     </button>
   );
@@ -153,6 +118,7 @@ function DocumentImageTile({ url, onPreview }) {
 
 export default function ProviderDetailPage() {
   const { providerId } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const { isMobile } = useOutletContext() ?? {};
   const [provider, setProvider] = useState(null);
@@ -168,48 +134,18 @@ export default function ProviderDetailPage() {
       : 'Not found';
   useMobileHeaderTitle(mobileNavTitle);
 
-  const fetchProvider = useCallback((opts = {}) => {
-    const showLoading = opts.showLoading !== false;
-    if (showLoading) setLoading(true);
-    callApi({
-      method: Method.GET,
-      endPoint: api.getAdminProviderById(providerId),
-      onSuccess(response) {
-        const row = response.data ?? response.provider ?? response;
-        const normalized = normalizeProvider(row);
-        if (normalized?.id) clearPersistedVerification(normalized.id);
-        setProvider(normalized);
-        if (showLoading) setLoading(false);
-      },
-      onError() {
-        const mock = findMockProvider(providerId);
-        const base = mock ? normalizeProvider(mock) : null;
-        setProvider(base ? applyPersistedVerificationOverride(base) : null);
-        if (showLoading) setLoading(false);
-      },
-    });
-  }, [providerId]);
-
-  useEffect(() => { fetchProvider({ showLoading: true }); }, [fetchProvider]);
-
-  const applyVerifiedUpdate = (p, confirmRef) => {
-    if (!p) return p;
-    const nextStatus = confirmRef.type === 'verify' ? 'verified' : 'rejected';
-    const nextDocs = confirmRef.type === 'verify'
-      ? mergeDocPairs(demoDocumentsOnVerify(p.id), p.organizerVerification?.documents)
-      : mergeDocuments(p.organizerVerification?.documents);
-    return {
-      ...p,
-      verificationStatus: nextStatus,
-      isVerified: confirmRef.type === 'verify',
-      organizerVerification: {
-        phone: p.organizerVerification?.phone || p.phone,
-        email: p.organizerVerification?.email || p.email,
-        documentType: p.organizerVerification?.documentType || 'Identity card',
-        documents: nextDocs,
-      },
-    };
-  };
+  useEffect(() => {
+    setLoading(true);
+    const raw = location.state?.rawUser;
+    const id = String(providerId ?? '');
+    const rawId = raw && typeof raw === 'object' ? String(raw._id ?? raw.id ?? '') : '';
+    if (raw && rawId === id) {
+      setProvider(normalizeProviderFromUser(raw));
+    } else {
+      setProvider(null);
+    }
+    setLoading(false);
+  }, [providerId, location.key, location.state]);
 
   const handleVerifyAction = () => {
     if (!confirm || !provider) return;
@@ -220,28 +156,34 @@ export default function ProviderDetailPage() {
       endPoint: api.verifyAdminProvider(provider.id),
       bodyParams: { status: confirmRef.type === 'verify' ? 'verified' : 'rejected' },
       onSuccess(responseData) {
-        clearPersistedVerification(provider.id);
         setConfirm(null);
         setActLoading(false);
-        const row = responseData?.data ?? responseData?.provider ?? responseData;
+        const row = responseData?.data ?? responseData?.user ?? responseData?.provider ?? responseData;
+        const fromUser = row && typeof row === 'object' && !Array.isArray(row) ? normalizeProviderFromUser(row) : null;
+        if (fromUser) {
+          setProvider(fromUser);
+          return;
+        }
         const looksLikeProvider = row && typeof row === 'object' && !Array.isArray(row)
           && (row.verificationStatus != null || row.businessName != null || row.name != null || row.id != null);
         if (looksLikeProvider) {
           setProvider(normalizeProvider(row));
           return;
         }
-        fetchProvider({ showLoading: false });
-      },
-      onError() {
-        const updated = applyVerifiedUpdate(provider, confirmRef);
-        setProvider(updated);
-        persistVerificationSnapshot(provider.id, {
-          verificationStatus: updated.verificationStatus,
-          isVerified: updated.isVerified,
-          organizerVerification: updated.organizerVerification,
+        setProvider((prev) => {
+          if (!prev) return prev;
+          const nextStatus = confirmRef.type === 'verify' ? 'verified' : 'rejected';
+          return {
+            ...prev,
+            verificationStatus: nextStatus,
+            isVerified: confirmRef.type === 'verify',
+          };
         });
+      },
+      onError(err) {
         setConfirm(null);
         setActLoading(false);
+        notifyError(getApiErrorMessage(err));
       },
     });
   };
@@ -256,7 +198,9 @@ export default function ProviderDetailPage() {
     return (
       <div style={{ padding: 24 }}>
         <Link to="/providers" style={{ fontSize: 14, fontWeight: 600, color: 'var(--primary)' }}>← Back to providers</Link>
-        <p style={{ marginTop: 20, color: 'var(--text-muted)' }}>Provider not found.</p>
+        <p style={{ marginTop: 20, color: 'var(--text-muted)', maxWidth: 420, lineHeight: 1.5 }}>
+          No provider data loaded. Open a provider from the providers list (eye icon) to view details here. Refreshing this page clears the selection.
+        </p>
       </div>
     );
   }
@@ -375,7 +319,7 @@ export default function ProviderDetailPage() {
 
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 18, marginBottom: 28, flexWrap: 'wrap' }}>
         {provider.profileImageUrl ? (
-          <img
+          <PresignedImage
             src={provider.profileImageUrl}
             alt=""
             style={{
@@ -575,7 +519,7 @@ export default function ProviderDetailPage() {
                 boxSizing: 'border-box',
               }}
             >
-              <img src={docs.selfie} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+              <PresignedImage src={docs.selfie} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
             </button>
           ) : (
             <div
@@ -627,7 +571,7 @@ export default function ProviderDetailPage() {
           }}
         >
           {imagePreviewUrl ? (
-            <img
+            <PresignedImage
               key={imagePreviewUrl}
               src={imagePreviewUrl}
               alt=""
@@ -665,6 +609,96 @@ export default function ProviderDetailPage() {
   );
 }
 
+function displayNameFromUser(user) {
+  if (!user || typeof user !== 'object') return '';
+  const p = user.profile && typeof user.profile === 'object' ? user.profile : null;
+  if (p) {
+    const parts = [p.firstName, p.lastName].filter(Boolean).join(' ').trim();
+    if (parts) return parts;
+    if (String(p.username ?? '').trim()) return String(p.username).trim();
+    if (String(p.businessName ?? '').trim()) return String(p.businessName).trim();
+  }
+  const top = String(user.name ?? user.fullName ?? user.displayName ?? '').trim();
+  if (top) return top;
+  const email = String(user.email ?? '').trim();
+  if (email.includes('@')) return email.split('@')[0].trim();
+  return '';
+}
+
+/** Maps GET /users/:id document into the detail view shape (same field sources as providers list). */
+function normalizeProviderFromUser(user) {
+  if (!user || typeof user !== 'object') return null;
+  const id = String(user._id ?? user.id ?? '');
+  if (!id) return null;
+  const p = user.profile && typeof user.profile === 'object' ? user.profile : null;
+  const firstName = String(p?.firstName ?? user.firstName ?? user.first_name ?? '').trim();
+  const lastName = String(p?.lastName ?? user.lastName ?? user.last_name ?? '').trim();
+  const person = [firstName, lastName].filter(Boolean).join(' ').trim();
+  const businessName =
+    String(p?.businessName ?? '').trim()
+    || String(p?.username ?? '').trim()
+    || displayNameFromUser(user)
+    || '—';
+  const loc = p?.location && typeof p.location === 'object' ? p.location : null;
+  const region = String(loc?.country ?? user.country ?? '').trim() || undefined;
+  const profileImageUrl =
+    String(p?.profilePicture ?? p?.profile_picture ?? user.profileImageUrl ?? user.avatarUrl ?? '').trim() || undefined;
+
+  const isAdminVerified = user.isAdminVerified === true;
+  const vsRaw = String(user.verificationStatus ?? user.verification_status ?? '').toLowerCase();
+  let verificationStatus = 'pending';
+  if (isAdminVerified || vsRaw === 'verified') verificationStatus = 'verified';
+  else if (vsRaw === 'rejected') verificationStatus = 'rejected';
+  else if (vsRaw === 'not_submitted') verificationStatus = 'pending';
+
+  const org = user.organizerVerification || user.organizer_verification;
+  const iv = p?.idVerification || p?.id_verification;
+  const rawDocs =
+    org?.documents
+    ?? user.documents
+    ?? p?.documents
+    ?? documentsFromProfileIdVerification(p);
+
+  const documentType =
+    org?.documentType
+    ?? org?.document_type
+    ?? formatIdMethodLabel(iv?.method);
+
+  const row = {
+    id,
+    _id: user._id ?? id,
+    email: user.email,
+    phone: user.phone,
+    firstName: firstName || undefined,
+    lastName: lastName || undefined,
+    name: person || businessName,
+    businessName,
+    region,
+    createdAt: user.createdAt ?? user.created_at,
+    profileImageUrl,
+    verificationStatus,
+    isVerified: isAdminVerified,
+    bankName:
+      user.bankName
+      ?? user.bank_name
+      ?? user.providerBank?.bankName
+      ?? user.paystackAccountName,
+    accountNumber:
+      user.accountNumber
+      ?? user.account_number
+      ?? user.bankAccountNumber
+      ?? user.paystackAccountNumber
+      ?? user.providerBank?.accountNumber,
+    organizerVerification: org || {
+      phone: user.phone ?? p?.phone,
+      email: user.email ?? p?.email,
+      documentType,
+      documents: rawDocs,
+    },
+  };
+  return normalizeProvider(row);
+}
+
 function normalizeProvider(row) {
   const org = row.organizerVerification || row.organizer_verification;
   const rawDocs = org?.documents ?? row.documents;
@@ -675,8 +709,9 @@ function normalizeProvider(row) {
   return {
     ...row,
     region: row.region ?? row.state ?? row.region_name,
-    bankName: row.bankName ?? row.bank_name,
-    accountNumber: row.accountNumber ?? row.account_number,
+    bankName: row.bankName ?? row.bank_name ?? row.paystackAccountName,
+    accountNumber:
+      row.accountNumber ?? row.account_number ?? row.paystackAccountNumber,
     firstName: row.firstName ?? row.first_name ?? derivedFirst,
     lastName: row.lastName ?? row.last_name ?? derivedLast,
     name: row.name || (derivedFirst && `${derivedFirst} ${derivedLast}`.trim()) || fullName,
